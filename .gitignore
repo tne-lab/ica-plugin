@@ -11,3 +11,5 @@
 !**/Build/CMakeLists.txt
 !**/Build/CMAKE_README.txt
 
+# Don't ignore binica executables (*.exe might be in global .gitignore)
+!binica/*.exe
