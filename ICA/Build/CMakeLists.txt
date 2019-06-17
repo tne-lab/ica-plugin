@@ -79,7 +79,7 @@ elseif(LINUX)
 	target_compile_options(${PLUGIN_NAME} PRIVATE -O3) #enable optimization for linux debug
 	
 	install(TARGETS ${PLUGIN_NAME} LIBRARY DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/ica_linux TYPE BIN RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_linux DESTINATION ${GUI_BIN_DIR} RENAME binica)
 
 elseif(APPLE)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/MacOSX/build/)
@@ -88,7 +88,7 @@ elseif(APPLE)
 	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared")
 
 	install(TARGETS ${PLUGIN_NAME} DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/PlugIns)
-	install(PROGRAMS ${BINICA_DIR}/ica_osx TYPE BIN RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_osx DESTINATION ${GUI_BIN_DIR} RENAME binica)
 	
 	set(CMAKE_PREFIX_PATH /opt/local)
 endif()
