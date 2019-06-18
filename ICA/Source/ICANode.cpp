@@ -18,12 +18,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ICANode.h"
 #include "ICAEditor.h"
 
+#include <iostream>
+
 using namespace ICA;
 
 //Change all names for the relevant ones, including "Processor Name"
-ICANode::ICANode() : GenericProcessor("ICA")
+ICANode::ICANode()
+    : GenericProcessor("ICA")
+    , selectionMatrix(2, 2)
 {
-
+    selectionMatrix(0, 0) = 3;
+    selectionMatrix(1, 0) = 2.5;
+    selectionMatrix(0, 1) = -1;
+    selectionMatrix(1, 1) = selectionMatrix(1, 0) + selectionMatrix(0, 1);
+    std::cout << selectionMatrix << std::endl;
 }
 
 ICANode::~ICANode()

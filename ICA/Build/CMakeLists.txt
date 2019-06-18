@@ -41,6 +41,9 @@ target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BASE_DIR}/JuceLibraryCode
 
 set(BINICA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../binica)
 
+# eigen (header library):
+target_include_directories(${PLUGIN_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../eigen)
+
 #Libraries and compiler options
 if(MSVC)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/VisualStudio2013)
