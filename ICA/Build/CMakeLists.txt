@@ -46,6 +46,9 @@ target_include_directories(${PLUGIN_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../
 
 #Libraries and compiler options
 if(MSVC)
+	# use unicode
+	add_definitions(-D_UNICODE -DUNICODE)
+
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/VisualStudio2013)
 
 	if (CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -61,14 +64,7 @@ if(MSVC)
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl-)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/binica_${CMAKE_LIBRARY_ARCHITECTURE}.exe
-		DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
-
-	if(CMAKE_LIBRARY_ARCHITECTURE STREQUAL "x64")
-		# only need DLLs for x64 version
-		install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../libs/bin/${CMAKE_LIBRARY_ARCHITECTURE}/
-			DESTINATION ${GUI_BIN_DIR}/shared)
-	endif()
+	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
 
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)

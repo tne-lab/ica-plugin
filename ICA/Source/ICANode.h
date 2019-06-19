@@ -38,6 +38,10 @@ namespace ICA
 		/** Optional method that informs the GUI if the processor is ready to function. If false acquisition cannot start. Defaults to true */
 		//bool isReady();
 
+        bool enable() override;
+
+        bool disable() override;
+
 		void process(AudioSampleBuffer& buffer) override;
 
 		/** The method that standard controls on the editor will call.
@@ -62,6 +66,26 @@ namespace ICA
 		//void updateSettings() override;
 
     private:
+
+        // Thread to run ICA (in a child process)
+        // have to reimplement most of juce::ChildProcess b/c it doesn't allow redirecting stdin...
+        class ICARunner : public Thread
+        {
+        public:
+            ICARunner(ICANode& creatorNode);
+            ~ICARunner();
+
+            void run() override;
+
+        private:
+
+            ICANode& node;
+
+            class NativeICAProcess;
+            NativeICAProcess* process;
+        };
+
+        ICARunner icaThread;
 
         // Matrix that selects components of the original signal to keep/reject
         MatrixXd selectionMatrix;
