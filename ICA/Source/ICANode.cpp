@@ -60,7 +60,7 @@ bool ICANode::disable()
 
 void ICANode::process(AudioSampleBuffer& buffer)
 {
-	/** 
+	/**
 	If the processor needs to handle events, this method must be called onyl once per process call
 	If spike processing is also needing, set the argument to true
 	*/
@@ -74,15 +74,15 @@ void ICANode::process(AudioSampleBuffer& buffer)
 
 		//Do whatever processing needed
 	}
-    
-    
+
+
 }
 
 void ICANode::run()
 {
     String settingsFn = File::getSpecialLocation(File::hostApplicationPath)
         .getParentDirectory().getChildFile("pre_binica.sc").getFullPathName();
-    
+
     ICAProcess proc(settingsFn);
 
     while (proc.isRunning())

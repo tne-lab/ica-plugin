@@ -43,12 +43,12 @@ public:
         {
             failed = true;
             return;
-        }        
+        }
         else if (result == 0)
         {
             // we're the child process...
             // make settings file our stdin
-            if (dup2(settingsFile, 0) == -1)
+            if (dup2(fileno(settingsFile), 0) == -1)
             {
                 exit(-1);
             }
@@ -57,7 +57,7 @@ public:
                 File::getSpecialLocation(File::hostApplicationPath)
                 .getParentDirectory().getChildFile("binica").getFullPathName();
 
-            execvl(binicaExe.toRawUTF8(), binicaExe.toRawUTF8());
+            execl(binicaExe.toRawUTF8(), binicaExe.toRawUTF8(), static_cast<char*>(nullptr));
             exit(-1);
         }
         else
