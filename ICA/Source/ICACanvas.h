@@ -39,5 +39,7 @@ namespace ICA
             
     private:
         GenericProcessor* const node;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICACanvas);
     };
 }

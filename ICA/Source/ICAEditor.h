@@ -28,6 +28,9 @@ namespace ICA
         ICAEditor(GenericProcessor* parentNode);
 
         Visualizer* createNewCanvas() override;
+
+    private:
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };
 }
 

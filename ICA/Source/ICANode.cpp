@@ -20,17 +20,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <iostream>
 
-#ifdef WIN32
-#include <Windows.h>
-#endif
-
 using namespace ICA;
 
-//Change all names for the relevant ones, including "Processor Name"
 ICANode::ICANode()
     : GenericProcessor  ("ICA")
+    , Thread            ("ICA Thread")
     , selectionMatrix   (2, 2)
-    , icaThread         (*this)
 {
     setProcessorType(PROCESSOR_TYPE_FILTER);
 
@@ -39,25 +34,6 @@ ICANode::ICANode()
     selectionMatrix(0, 1) = -1;
     selectionMatrix(1, 1) = selectionMatrix(1, 0) + selectionMatrix(0, 1);
     std::cout << selectionMatrix << std::endl;
-
-    ChildProcess icaProc;
-    char output[100];
-    if (!icaProc.start("binica.exe < pre_binica.sc"))
-    {
-        jassertfalse;
-    }
-
-    while (icaProc.isRunning())
-    {
-        int numRead;
-        if ((numRead = icaProc.readProcessOutput(output, 99)) > 0)
-        {
-            output[numRead] = '\0';
-            std::cout << output;
-        }
-    }
-    uint32 exitCode = icaProc.getExitCode();
-    std::cout << "binica returned " << static_cast<int32>(exitCode) << std::endl;
 }
 
 ICANode::~ICANode()
@@ -73,13 +49,13 @@ AudioProcessorEditor* ICANode::createEditor()
 
 bool ICANode::enable()
 {
-    icaThread.startThread();
+    startThread();
     return isEnabled;
 }
 
 bool ICANode::disable()
 {
-    return icaThread.stopThread(500);
+    return stopThread(500);
 }
 
 void ICANode::process(AudioSampleBuffer& buffer)
@@ -102,118 +78,29 @@ void ICANode::process(AudioSampleBuffer& buffer)
     
 }
 
-
-// ICARunner
-ICANode::ICARunner::ICARunner(ICANode& creatorNode)
-    : Thread    ("ICA Thread")
-    , node      (creatorNode)
-    , process   (nullptr)
-{}
-
-ICANode::ICARunner::~ICARunner()
+void ICANode::run()
 {
-    delete process;
+    String settingsFn = File::getSpecialLocation(File::hostApplicationPath)
+        .getParentDirectory().getChildFile("pre_binica.sc").getFullPathName();
+    
+    ICAProcess proc(settingsFn);
+
+    while (proc.isRunning())
+    {
+        if (threadShouldExit())
+        {
+            std::cout << "Thread exiting, abandoning binica run." << std::endl;
+            return;
+        }
+
+        wait(100);
+    }
+
+    if (proc.failedToRun())
+    {
+        std::cout << "Oh no, binica failed to run!" << std::endl;
+        return;
+    }
+
+    std::cout << "Received exit code " << proc.getExitCode() << " from binica." << std::endl;
 }
-
-void ICANode::ICARunner::run()
-{
-}
-
-
-#ifdef WIN32
-
-class ICANode::ICARunner::NativeICAProcess
-{
-public:
-    NativeICAProcess(const String& path)
-        : ok                (false)
-        , settingsPath      (path)
-        , processReadPipe   (0)
-        , processWritePipe  (0)
-        , settingsReadPipe  (0)
-        , settingsWritePipe (0)
-    {
-        SECURITY_ATTRIBUTES securityAtts = { 0 };
-        securityAtts.nLength = sizeof(securityAtts);
-        securityAtts.bInheritHandle = TRUE;
-
-        if (CreatePipe(&processReadPipe, &processWritePipe, &securityAtts, 0)
-            && SetHandleInformation(processReadPipe, HANDLE_FLAG_INHERIT, 0)
-            && CreatePipe(&settingsReadPipe, &settingsWritePipe, &securityAtts, 0)
-            && SetHandleInformation(settingsWritePipe, HANDLE_FLAG_INHERIT, 0))
-        {
-            STARTUPINFOW startupInfo = { 0 };
-            startupInfo.cb = sizeof(startupInfo);
-
-            startupInfo.hStdInput = settingsReadPipe;
-            startupInfo.hStdOutput = processWritePipe;
-            startupInfo.hStdError = processWritePipe;
-            startupInfo.dwFlags = STARTF_USESTDHANDLES;
-
-            if (CreateProcess(L"binica.exe", nullptr,
-                nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                nullptr, nullptr, &startupInfo, &processInfo) == FALSE)
-            {
-                return;
-            }
-
-            ok = pipeSettingsToICA();
-        }
-    }
-
-    ~NativeICAProcess()
-    {
-
-    }
-
-    bool ok;
-
-private:
-
-    bool pipeSettingsToICA()
-    {
-        // source: https://docs.microsoft.com/en-us/windows/desktop/procthread/creating-a-child-process-with-redirected-input-and-output
-
-        HANDLE settingsFile = CreateFile(settingsPath.toWideCharPointer(), GENERIC_READ,
-            0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, nullptr);
-
-        if (settingsFile == INVALID_HANDLE_VALUE)
-        {
-            return false;
-        }
-
-        static const DWORD bufsize = 4096;
-        DWORD numRead, numWritten;
-        CHAR buf[bufsize];
-        BOOL success = FALSE;
-
-        while (true)
-        {
-            success = ReadFile(settingsFile, buf, bufsize, &numRead, nullptr);
-            if (!success || numRead == 0)
-            {
-                break;
-            }
-
-            success = WriteFile(settingsWritePipe, buf, numRead, &numWritten, nullptr);
-            if (!success)
-            {
-                break;
-            }
-        }
-
-        // close the pipe handle so the child process stops reading
-        if (!CloseHandle(settingsWritePipe))
-        {
-            return false;
-        }
-
-
-    }
-
-    const String& settingsPath;
-    HANDLE processReadPipe, processWritePipe, settingsReadPipe, settingsWritePipe;
-    PROCESS_INFORMATION processInfo;
-};
-
-#endif

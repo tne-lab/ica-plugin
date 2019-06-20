@@ -26,7 +26,7 @@ namespace ICA
 {
     using Eigen::MatrixXd;
 
-	class ICANode : public GenericProcessor
+	class ICANode : public GenericProcessor, public Thread
 	{
 	public:
 		ICANode();
@@ -65,31 +65,45 @@ namespace ICA
 		*/
 		//void updateSettings() override;
 
+        // Does ICA calculation
+        void run() override;
+
     private:
-
-        // Thread to run ICA (in a child process)
-        // have to reimplement most of juce::ChildProcess b/c it doesn't allow redirecting stdin...
-        class ICARunner : public Thread
-        {
-        public:
-            ICARunner(ICANode& creatorNode);
-            ~ICARunner();
-
-            void run() override;
-
-        private:
-
-            ICANode& node;
-
-            class NativeICAProcess;
-            NativeICAProcess* process;
-        };
-
-        ICARunner icaThread;
 
         // Matrix that selects components of the original signal to keep/reject
         MatrixXd selectionMatrix;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICANode);
 	};
+
+
+    // Manages the process that runs binica.
+    // Mostly based on juce::ChildProcess, but adding the ability to redirect stdin,
+    // which binica requires.
+    // Creating an instance automatically starts the process.
+    // All stdout and stderr goes to the console.
+    class ICAProcess
+    {
+        // pimpl
+        class NativeICAProcess;
+        ScopedPointer<NativeICAProcess> nativeProcess;
+
+    public:
+        ICAProcess(const String& settingsPath);
+        ~ICAProcess();
+
+        bool isRunning() const;
+
+        // check whether the process didn't even get started
+        bool failedToRun() const;
+
+        // precondition: isRunning() and failedToRun() are false
+        // (if failed to run, will return 1 to indicate generic failure)
+        uint32 getExitCode() const;
+
+    private:
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAProcess);
+    };
 }
 
 #endif // ICA_NODE_H_DEFINED
