@@ -60,11 +60,7 @@ public:
     ~NativeICAProcess()
     {
         // this just closes the handles, doesn't terminate the process
-        for (HANDLE h : {
-            processInfo.hThread,
-            processInfo.hProcess,
-            settingsFile
-        })
+        for (HANDLE h : { processInfo.hThread, processInfo.hProcess, settingsFile })
         {
             if (h != 0)
             {
@@ -98,7 +94,7 @@ public:
 
         if (processInfo.hProcess == 0) // hasn't started yet nor failed
         {
-            return STILL_ACTIVE;
+            return 0;
         }
 
         DWORD exitCode = 0;
