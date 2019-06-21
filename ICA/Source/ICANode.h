@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <ProcessorHeaders.h>
 
 #include <Eigen/Dense>
+#include <RWSync/RWSyncContainer.h>
 
 namespace ICA
 {
@@ -72,6 +73,8 @@ namespace ICA
 
         // Matrix that selects components of the original signal to keep/reject
         MatrixXd selectionMatrix;
+
+        RWSync::FixedContainer<AudioSampleBuffer> sharedSampleBuffer;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICANode);
 	};

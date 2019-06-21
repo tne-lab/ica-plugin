@@ -4,6 +4,15 @@ This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you t
 
 ## Requirements
 
+Depends on this Open Ephys common library: [RWSync](https://github.com/tne-lab/rw-synchronizer). This must be built (using CMake) before ICA will compile.
+
+Depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) header library, which is included at the top level as a submodule. After cloning, you must also initialize the submodule:
+```
+cd eigen
+git submodule init
+git submodule update
+```
+
 The plugin depends on a program called [BINICA](https://sccn.ucsd.edu/wiki/Binica). Since the compilation process seems complex and the precompiled versions are well-tested, just the compiled binaries for each platform are currently included under `/binica`. The following platforms are supported:
 
 * Windows Intel x64

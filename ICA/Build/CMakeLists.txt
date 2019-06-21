@@ -36,6 +36,8 @@ target_compile_definitions(${PLUGIN_NAME} PUBLIC
 	OEPLUGIN
 	"$<$<PLATFORM_ID:Windows>:JUCE_API=__declspec(dllimport)>"
 	$<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS>
+	$<$<PLATFORM_ID:Windows>:_UNICODE>
+	$<$<PLATFORM_ID:Windows>:UNICODE>
 	$<$<PLATFORM_ID:Linux>:JUCE_DISABLE_NATIVE_FILECHOOSERS=1>
 	$<$<CONFIG:Debug>:DEBUG=1>
 	$<$<CONFIG:Debug>:_DEBUG=1>
@@ -53,9 +55,6 @@ target_include_directories(${PLUGIN_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../
 
 #Libraries and compiler options
 if(MSVC)
-	# use unicode
-	add_definitions(-D_UNICODE -DUNICODE)
-
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/VisualStudio2013)
 
 	if (CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -67,7 +66,10 @@ if(MSVC)
 	
 	set(GUI_BIN_DIR ${GUI_BIN_DIR}/$<IF:$<CONFIG:Debug>,Debug,Release>/bin)
 
-	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
+	target_link_libraries(${PLUGIN_NAME}
+		${GUI_BIN_DIR}/open-ephys.lib
+		${GUI_BIN_DIR}/lib/RWSync.lib)
+	
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl-)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
@@ -76,7 +78,9 @@ if(MSVC)
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)
 
-	target_link_libraries(${PLUGIN_NAME} GL X11 Xext Xinerama asound dl freetype pthread rt)
+	target_link_libraries(${PLUGIN_NAME} GL X11 Xext Xinerama asound dl freetype pthread rt
+		${GUI_BIN_DIR}/shared/RWSync.so)
+	
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
 		"-fvisibility=hidden -fPIC -rdynamic -Wl,-rpath,'$ORIGIN/../shared'")
 	target_compile_options(${PLUGIN_NAME} PRIVATE -fPIC -rdynamic)
@@ -87,6 +91,9 @@ elseif(LINUX)
 
 elseif(APPLE)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/MacOSX/build/)
+	
+	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/shared/RWSync.dylib)
+	
 	set_target_properties(${PLUGIN_NAME} PROPERTIES BUNDLE TRUE)
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
 	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared")
@@ -96,6 +103,10 @@ elseif(APPLE)
 	
 	set(CMAKE_PREFIX_PATH /opt/local)
 endif()
+
+#include common lib header files
+
+target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BIN_DIR}/include)
 
 #create filters for vs and xcode
 
