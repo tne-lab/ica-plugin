@@ -24,14 +24,15 @@ using namespace ICA;
 class ICAProcess::NativeICAProcess
 {
 public:
-    NativeICAProcess(const String& settingsPath)
+    NativeICAProcess(const File& settingsFilename)
     {
         SECURITY_ATTRIBUTES securityAtts = { 0 };
         securityAtts.nLength = sizeof(securityAtts);
         securityAtts.bInheritHandle = TRUE;
 
-        settingsFile = CreateFile(settingsPath.toWideCharPointer(), GENERIC_READ,
-            0, &securityAtts, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, nullptr);
+
+        settingsFile = CreateFile(settingsFilename.getFullPathName().toWideCharPointer(),
+            GENERIC_READ, 0, &securityAtts, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, nullptr);
 
         if (settingsFile == INVALID_HANDLE_VALUE)
         {
@@ -51,10 +52,13 @@ public:
         static const String binicaExe =
             File::getSpecialLocation(File::hostApplicationPath)
             .getParentDirectory().getChildFile("binica.exe").getFullPathName();
+
+        // change working dir so that binica can use relative filenames
+        const String workingDir = settingsFilename.getParentDirectory().getFullPathName();
             
         failed = !CreateProcess(binicaExe.toWideCharPointer(), nullptr,
             nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT,
-            nullptr, nullptr, &startupInfo, &processInfo);
+            nullptr, workingDir.toWideCharPointer(), &startupInfo, &processInfo);
     }
 
     ~NativeICAProcess()
@@ -112,8 +116,8 @@ private:
 };
 
 
-ICAProcess::ICAProcess(const String& settingsPath)
-    : nativeProcess(new NativeICAProcess(settingsPath))
+ICAProcess::ICAProcess(const File& settingsFile)
+    : nativeProcess(new NativeICAProcess(settingsFile))
 {}
 
 ICAProcess::~ICAProcess()

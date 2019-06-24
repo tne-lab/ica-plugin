@@ -92,7 +92,7 @@ namespace ICA
         ScopedPointer<NativeICAProcess> nativeProcess;
 
     public:
-        ICAProcess(const String& settingsPath);
+        ICAProcess(const File& settingsFile);
         ~ICAProcess();
 
         bool isRunning() const;

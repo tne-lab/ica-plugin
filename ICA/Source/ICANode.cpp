@@ -80,10 +80,10 @@ void ICANode::process(AudioSampleBuffer& buffer)
 
 void ICANode::run()
 {
-    String settingsFn = File::getSpecialLocation(File::hostApplicationPath)
-        .getParentDirectory().getChildFile("pre_binica.sc").getFullPathName();
+    File settingsFile = File::getSpecialLocation(File::hostApplicationPath)
+        .getParentDirectory().getChildFile("testica").getChildFile("pre_binica.sc");
 
-    ICAProcess proc(settingsFn);
+    ICAProcess proc(settingsFile);
 
     while (proc.isRunning())
     {

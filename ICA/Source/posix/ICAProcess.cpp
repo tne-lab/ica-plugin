@@ -27,10 +27,10 @@ using namespace ICA;
 class ICAProcess::NativeICAProcess
 {
 public:
-    NativeICAProcess(const String& settingsPath)
+    NativeICAProcess(const File& settingsFilename)
     {
         // open settings file
-        settingsFile = fopen(settingsPath.toRawUTF8(), "r");
+        settingsFile = fopen(settingsFilename.getFullPathName().toRawUTF8(), "r");
         if (settingsFile == nullptr)
         {
             failed = true;
@@ -49,6 +49,13 @@ public:
             // we're the child process...
             // make settings file our stdin
             if (dup2(fileno(settingsFile), 0) == -1)
+            {
+                exit(-1);
+            }
+
+            // change working directory
+            if (chdir(settingsFilename.getParentDirectory()
+                .getFullPathName().toRawUTF8()) == -1)
             {
                 exit(-1);
             }
@@ -73,11 +80,17 @@ public:
         {
             fclose(settingsFile);
         }
+
+        // try to wait on process if we haven't yet
+        if (!gotExitCode)
+        {
+            getExitCode();
+        }
     }
 
     bool isRunning() const
     {
-        if (failed)
+        if (failed || gotExitCode)
         {
             return false;
         }
@@ -92,7 +105,7 @@ public:
         return pid == 0 || !(WIFEXITED(childState) || WIFSIGNALED(childState));
     }
 
-    uint32 getExitCode() const
+    uint32 getExitCode()
     {
         if (failed)
         {
@@ -104,12 +117,19 @@ public:
             return 0;
         }
 
+        if (gotExitCode)
+        {
+            return exitCode;
+        }
+
         int childState = 0;
         const int pid = waitpid(childPID, &childState, WNOHANG);
 
         if (pid >= 0 && WIFEXITED(childState))
         {
-            return WEXITSTATUS(childState);
+            exitCode = WEXITSTATUS(childState);
+            gotExitCode = true;
+            return exitCode;
         }
 
         return 0;
@@ -120,12 +140,14 @@ public:
 private:
     FILE* settingsFile = nullptr;
     int childPID = 0;
+    bool gotExitCode = false;
+    uint32 exitCode;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NativeICAProcess);
 };
 
-ICAProcess::ICAProcess(const String& settingsPath)
-    : nativeProcess(new NativeICAProcess(settingsPath))
+ICAProcess::ICAProcess(const File& settingsFile)
+    : nativeProcess(new NativeICAProcess(settingsFile))
 {}
 
 ICAProcess::~ICAProcess()
