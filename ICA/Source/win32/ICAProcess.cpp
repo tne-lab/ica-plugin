@@ -24,20 +24,20 @@ using namespace ICA;
 class ICAProcess::NativeICAProcess
 {
 public:
-    NativeICAProcess(const File& settingsFilename)
+    NativeICAProcess(const File& configFilename)
     {
         SECURITY_ATTRIBUTES securityAtts = { 0 };
         securityAtts.nLength = sizeof(securityAtts);
         securityAtts.bInheritHandle = TRUE;
 
 
-        settingsFile = CreateFile(settingsFilename.getFullPathName().toWideCharPointer(),
+        configFile = CreateFile(configFilename.getFullPathName().toWideCharPointer(),
             GENERIC_READ, 0, &securityAtts, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, nullptr);
 
-        if (settingsFile == INVALID_HANDLE_VALUE)
+        if (configFile == INVALID_HANDLE_VALUE)
         {
             failed = true;
-            settingsFile = 0;
+            configFile = 0;
             return;
         }
 
@@ -45,7 +45,7 @@ public:
         startupInfo.cb = sizeof(startupInfo);
 
         startupInfo.dwFlags = STARTF_USESTDHANDLES;
-        startupInfo.hStdInput = settingsFile;
+        startupInfo.hStdInput = configFile;
         startupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
         startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
@@ -54,7 +54,7 @@ public:
             .getParentDirectory().getChildFile("binica.exe").getFullPathName();
 
         // change working dir so that binica can use relative filenames
-        const String workingDir = settingsFilename.getParentDirectory().getFullPathName();
+        const String workingDir = configFilename.getParentDirectory().getFullPathName();
             
         failed = !CreateProcess(binicaExe.toWideCharPointer(), nullptr,
             nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT,
@@ -64,7 +64,7 @@ public:
     ~NativeICAProcess()
     {
         // this just closes the handles, doesn't terminate the process
-        for (HANDLE h : { processInfo.hThread, processInfo.hProcess, settingsFile })
+        for (HANDLE h : { processInfo.hThread, processInfo.hProcess, configFile })
         {
             if (h != 0)
             {
@@ -89,7 +89,7 @@ public:
         return WaitForSingleObject(processInfo.hProcess, 0) != WAIT_OBJECT_0;
     }
 
-    uint32 getExitCode() const
+    int32 getExitCode() const
     {
         if (failed)
         {
@@ -103,21 +103,22 @@ public:
 
         DWORD exitCode = 0;
         GetExitCodeProcess(processInfo.hProcess, &exitCode);
-        return uint32(exitCode);
+        // deal with stupid negative exit code
+        return int32(exitCode >= (1L << 31) ? int64(exitCode) - (1LL << 32) : exitCode);
     }
 
     bool failed = false;
 
 private:
-    HANDLE settingsFile = 0;
+    HANDLE configFile = 0;
     PROCESS_INFORMATION processInfo = {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NativeICAProcess);
 };
 
 
-ICAProcess::ICAProcess(const File& settingsFile)
-    : nativeProcess(new NativeICAProcess(settingsFile))
+ICAProcess::ICAProcess(const File& configFile)
+    : nativeProcess(new NativeICAProcess(configFile))
 {}
 
 ICAProcess::~ICAProcess()
@@ -133,7 +134,7 @@ bool ICAProcess::failedToRun() const
     return nativeProcess->failed;
 }
 
-uint32 ICAProcess::getExitCode() const
+int32 ICAProcess::getExitCode() const
 {
     return nativeProcess->getExitCode();
 }

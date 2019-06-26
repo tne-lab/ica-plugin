@@ -22,14 +22,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace ICA
 {
-    class ICAEditor : public VisualizerEditor
+    class ICAEditor 
+        : public VisualizerEditor
+        , public LabelListener
     {
     public:
         ICAEditor(GenericProcessor* parentNode);
 
         Visualizer* createNewCanvas() override;
 
+        //TODO make sure to normalize the dirSuffix here, i.e. call createLegalFileName
+        void labelTextChanged(Label* label) override;
+
+        //// fixes getActiveChannels to return the right thing
+        //// even if the ChannelSelector hasn't been updated yet
+        //// (based on assumption that new channels are selected by default)
+        //Array<int> getActiveChannels(int expectedTotalChannels);
+
     private:
+
+        Component startPage;
+
+        Label durationEditable;
+
+        Label dirSuffixEditable;
+
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };
 }
