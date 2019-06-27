@@ -20,19 +20,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerEditorHeaders.h>
 
+#include <sstream> // string parsing
+
 namespace ICA
 {
+    class ICANode;
+
     class ICAEditor 
         : public VisualizerEditor
-        , public LabelListener
+        , public Label::Listener
+        , public ComboBox::Listener
     {
     public:
-        ICAEditor(GenericProcessor* parentNode);
+        ICAEditor(ICANode* parentNode);
 
         Visualizer* createNewCanvas() override;
 
         //TODO make sure to normalize the dirSuffix here, i.e. call createLegalFileName
-        void labelTextChanged(Label* label) override;
+        void labelTextChanged(Label* labelThatHasChanged) override;
+
+        void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
+
+        void updateSettings() override;
 
         //// fixes getActiveChannels to return the right thing
         //// even if the ChannelSelector hasn't been updated yet
@@ -41,11 +50,55 @@ namespace ICA
 
     private:
 
+        // (utility functions copied from PhaseCalculator)
+        /*
+        * Tries to read a number of type out from input. Returns false if unsuccessful.
+        * Otherwise, returns true and writes the result to *out.
+        */
+        template<typename T>
+        static bool readNumber(const String& input, T& out)
+        {
+            std::istringstream istream(input.toStdString());
+            istream >> out;
+            return !istream.fail();
+        }
+
+        /*
+        * Return whether the control contained a valid input between min and max, inclusive.
+        * If so, it is stored in *out and the control is updated with the parsed input.
+        * Otherwise, the control is reset to defaultValue.
+        *
+        * In header to make sure specializations not used in ICAEditor.cpp
+        * are still available to other translation units.
+        */
+        template<typename Ctrl, typename T>
+        static bool updateControl(Ctrl* c, const T min, const T max,
+            const T defaultValue, T& out)
+        {
+            if (readNumber(c->getText(), out))
+            {
+                out = jmax(min, jmin(max, out));
+                c->setText(String(out), dontSendNotification);
+                return true;
+            }
+
+            c->setText(String(defaultValue), dontSendNotification);
+            return false;
+        }
+
         Component startPage;
 
-        Label durationEditable;
+        Label subProcLabel;
+        ComboBox subProcComboBox;
 
-        Label dirSuffixEditable;
+        Label durationLabel;
+        Label durationTextBox;
+
+        Label collectedLabel;
+        Label collectedIndicator;
+
+        Label dirSuffixLabel;
+        Label dirSuffixTextBox;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };

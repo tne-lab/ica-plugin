@@ -21,20 +21,30 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <ProcessorHeaders.h>
 
 #include <map>
+#include <atomic>
 #include <Eigen/Dense>
 #include <RWSync/RWSyncContainer.h>
 
 namespace ICA
 {
     // to cache input data to be used to compute ICA
-    // operations must be done through a handle which is secured by a mutex.
+    // modifications must be done through a handle which is secured by a mutex.
     class AudioBufferFifo
     {
-    private:
-        struct Handle
-        {
-            AudioBufferFifo& fifo;
+    public:
+        AudioBufferFifo(int numChans, int numSamps);
 
+        int getNumSamples() const;
+
+        const Value& getPctFull() const;
+        bool isFull() const;
+
+        class Handle
+        {
+        protected:
+            Handle(AudioBufferFifo& fifoIn);
+
+        public:
             void reset();
             void resetWithSize(int numChans, int numSamps);
 
@@ -47,9 +57,14 @@ namespace ICA
             // write all samples of the given channels to the given file in column-major order.
             // expects that the FIFO is already full.
             Result writeChannelsToFile(const File& file, const Array<int>& channels);
+
+        private:
+            // whether operations should be permitted
+            virtual bool isValid() const;
+
+            AudioBufferFifo& fifo;
         };
 
-    public:
         class LockHandle : public Handle, public ScopedLock
         {
         public:
@@ -60,23 +75,26 @@ namespace ICA
         {
         public:
             TryLockHandle(AudioBufferFifo& fifoIn);
+
+        private:
+            bool isValid() const override;
         };
 
-        AudioBufferFifo(int numChans, int numSamps);
-
-        const Value& getPctWritten() const;
-
-        bool isFull() const;
-
     private:
+
+        // updates pctWritten and full based on numWritten
+        void updateFullStatus();
+
+        void reset();
+
         ScopedPointer<AudioSampleBuffer> data;
         CriticalSection mutex;
 
         int startPoint;
         int numWritten;
-        Value pctWritten; // for display - nearest int
-        Atomic<bool> full;
-
+        Value pctFull; // for display - nearest int
+        std::atomic<bool> full;
+        
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBufferFifo);
     };
 
@@ -84,7 +102,6 @@ namespace ICA
     {
     public:
         ICANode();
-        ~ICANode();
 
         bool hasEditor() const { return true; }
         AudioProcessorEditor* createEditor() override;
@@ -92,16 +109,14 @@ namespace ICA
         /** Optional method that informs the GUI if the processor is ready to function. If false acquisition cannot start. Defaults to true */
         //bool isReady();
 
+        // returns false on error, including if ICA is already running
+        bool startICA();
+
         //bool enable() override;
 
-        //bool disable() override;
+        bool disable() override;
 
         void process(AudioSampleBuffer& buffer) override;
-
-        /** The method that standard controls on the editor will call.
-        It is recommended that any variables used by the "process" function
-        are modified only through this method while data acquisition is active. */
-        //void setParameter(int parameterIndex, float newValue) override;
 
         /** Saving custom settings to XML. */
         //void saveCustomParametersToXml(XmlElement* parentElement) override;
@@ -109,15 +124,33 @@ namespace ICA
         /** Load custom settings from XML*/
         //void loadCustomParametersFromXml() override;
 
-        /** Optional method called every time the signal chain is refreshed or changed in any way.
-
-        Allows the processor to handle variations in the channel configuration or any other parameter
-        passed down the signal chain. The processor can also modify here the settings structure, which contains
-        information regarding the input and output channels as well as other signal related parameters. Said
-        structure shouldn't be manipulated outside of this method.
-
-        */
         void updateSettings() override;
+
+        // access stuff
+
+        Component* getCanvas() const;
+
+        float getTrainDurationSec() const;
+        void setTrainDurationSec(float dur);
+
+        String getDirSuffix() const;
+        void setDirSuffix(const String& suffix);
+
+        struct SubProcInfo
+        {
+            uint16 sourceID;
+            uint16 subProcIdx;
+            String sourceName;
+
+            // display name for the ComboBox
+            operator String() const;
+        };
+
+        const std::map<uint32, SubProcInfo>& getSubProcInfo() const;
+        uint32 getCurrSubProc() const;
+        void setCurrSubProc(uint32 fullId);
+
+        const Value& getPctFullValue() const;
 
     private:
 
@@ -126,35 +159,36 @@ namespace ICA
 
         String icaDirSuffix; // updated from editor
 
-        struct SubProcInfo
+        // for colllecting data from each subprocessor during acquisition
+        struct SubProcData
         {
-            String sourceName;
-            uint16 sourceID;
-            uint16 subProcIdx;
-
             float Fs;
             int dsStride; // = Fs / icaTargetFs (rounded to an int)
+            int dsOffset;
 
             Array<int> channelInds; // (indices in this processor)
 
-            ScopedPointer<AudioBufferFifo> dataCache;
+            AudioBufferFifo* dataCache;
         };
 
-        std::unordered_map<uint32, SubProcInfo> subProcInfo;
+        std::map<uint32, SubProcInfo> subProcInfo;
+        std::map<uint32, SubProcData> subProcData;
         uint32 currSubProc; // full source ID
 
-        int dsOffset = 0;
+        // what is shown on the editor when there is no subprocessor (no inputs)
+        static const Value nothingToCollect;
 
+        // owns the data (allows reuse between updates)
+        // should be accessed through a SubProcInfo struct though.
+        OwnedArray<AudioBufferFifo> dataCaches;
+
+        // temporary storage for ICA components
         AudioSampleBuffer componentBuffer;
-
-        // for writing input data for binica
-        static const size_t dataBlocksize = 1024;
-
-        //enum { idle, collecting, processing } state = idle;
 
         // info specific to an ICA run
         struct ICASettings
-        {           
+        {
+            uint32 subProc;
             Array<int> enabledChannels;
             File outputDir;
         };
@@ -164,22 +198,24 @@ namespace ICA
         public:
             ICARunner(ICANode& proc);
 
-            void run() override;
-
             void threadComplete(bool userPressedCancel) override;
 
-        private:
-            // Subroutines of run(). Each returns false if it is interrupted
-            // or otherwise does not complete successfully.
+            void run() override;
 
-            // Collect data from the process thread and write to a file
-            bool prepareICA();
+        private:
+
+            // Collect data from the process thread and write to a file.
+            // Returns # of samples written, or 0 on failure
+            int prepareICA();
 
             // Call the binica executable on our sample data
-            bool performICA();
+            bool performICA(int nSamples);
 
             // Read in output from binica and compute fields of ICAOutput
             bool processResults();
+
+            // Helper to read ICA output
+            static Result readOutput(const File& source, HeapBlock<float>& dest, int numel);
 
             void reportError(const String& whatHappened);
 
@@ -191,9 +227,11 @@ namespace ICA
 
             static const String inputFilename;
             static const String configFilename;
-            static const String wtsFilename;
-            static const String sphFilename;
+            static const String weightFilename;
+            static const String sphereFilename;
         };
+
+        ScopedPointer<ICARunner> icaRunner;
 
         // for calculating the selection matrix
         struct ICAOutput
@@ -209,29 +247,8 @@ namespace ICA
 
         // writer: GUI thread
         // reader: TransformationUpdater
-        RWSync::FixedContainer<Eigen::VectorXf> componentsToKeep;
-
-        class TransformationUpdater : public Thread
-        {
-        public:
-            TransformationUpdater(ICANode& proc);
-
-            void run() override;
-
-        private:
-            ICANode& processor;
-        };
-
-        // for applying the transformation in process()
-        struct ICATransformation
-        {
-            Eigen::MatrixXf transformation;
-            ICASettings settings;
-        };
-
-        // writer: TransformationUpdater
-        // reader: process thread
-        RWSync::FixedContainer<ICATransformation> icaTransformation;
+        // TODO, for now just take first component
+        //RWSync::FixedContainer<Eigen::VectorXf> componentsToKeep;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICANode);
     };
