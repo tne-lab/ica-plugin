@@ -51,14 +51,15 @@ void AudioBufferFifo::updateFullStatus()
 {
     int numSamps = data->getNumSamples();
     full.store(numWritten == numSamps, std::memory_order_release);
-    pctFull = String(int(100.0 * numWritten / numSamps + 0.5)) + "%";
+    int pctFullInt = numSamps == 0 ? 100 : int(100.0 * numWritten / numSamps + 0.5);
+    pctFull = String(pctFullInt) + "% full)";
 }
 
 void AudioBufferFifo::reset()
 {
     startPoint = 0;
     numWritten = 0;
-    pctFull = "0%";
+    pctFull = "0% full)";
     full = false;
 }
 
@@ -265,71 +266,107 @@ bool ICANode::disable()
         icaRunner->stopThread(500);
     }
 
+    // clear data caches
+    for (auto& subProcEntry : subProcData)
+    {
+        AudioBufferFifo& dataCache = subProcEntry.second->dataCache;
+        AudioBufferFifo::LockHandle hCache(dataCache);
+        hCache.reset();
+    }
+
     return true;
 }
 
 void ICANode::process(AudioSampleBuffer& buffer)
 {
-    // add data to cache for each subprocessor, if possible
+    // should only do anything on the first buffer, since "buffer" 
+    // should always be the same length during acquisition
+    componentBuffer.setSize(componentBuffer.getNumChannels(), buffer.getNumSamples());
+
+    // process each subprocessor individually
     for (auto& subProcEntry : subProcData)
     {
-        SubProcData& data = subProcEntry.second;
-        AudioBufferFifo::TryLockHandle hCache(*data.dataCache);
+        SubProcData* data = subProcEntry.second;
+
+        jassert(data->channelInds.size() > 0);
+        int nSamps = getNumSamples(data->channelInds[0]);
+
+        // add data to cache, if possible
+        AudioBufferFifo::TryLockHandle hCache(data->dataCache);
 
         if (hCache.isLocked())
         {
-            jassert(data.channelInds.size() > 0);
-            int nSamps = getNumSamples(data.channelInds[0]);
-
-            for (int s = data.dsOffset; s < nSamps; s += data.dsStride)
+            int s;
+            for (s = data->dsOffset; s < nSamps; s += data->dsStride)
             {
-                hCache.copySample(buffer, data.channelInds, s);
+                hCache.copySample(buffer, data->channelInds, s);
             }
 
-            data.dsOffset -= nSamps;
+            data->dsOffset = s - nSamps;
         }
-    }
 
-    // do ICA!
+        // do ICA!
+        RWSync::ReadPtr<ICAOutput> icaReader(data->icaOutput);
+        jassert(icaReader.isValid());
+        if (!icaReader.canRead())
+        {
+            continue; // probably no transformation has been computed yet
+        }
 
-    // should only happen on the first buffer, since they should all
-    // be the same length during acquisition
-    componentBuffer.setSize(componentBuffer.getNumChannels(), buffer.getNumSamples());
+        const Array<int>& icaChansRel = icaReader->settings.enabledChannels;
+        int nChans = icaChansRel.size();
+        int nComps = icaReader->components.size();
 
-    RWSync::ReadPtr<ICAOutput> icaReader(icaCoefs);
-    jassert(icaReader.isValid());
-    if (!icaReader.canRead())
-    {
-        return; // probably no transformation has been computed yet
-    }
+        for (int kComp = 0; kComp < nComps; ++kComp)
+        {
+            int comp = icaReader->components[kComp];
 
-    // for each component, if rejecting more than one...
-    const Array<int> icaChans = icaReader->settings.enabledChannels;
-    jassert(!icaChans.isEmpty()); // (should have errored when running ICA)
-    
-    int nSamps = getNumSamples(icaChans[0]);
-    componentBuffer.clear(0, 0, nSamps);
+            componentBuffer.clear(kComp, 0, nSamps);
 
-    // unmix into the components
-    for (int c = 0; c < icaChans.size(); ++c)
-    {
-        int chan = icaChans[c];
-        componentBuffer.addFrom(0, 0, buffer, chan, 0, nSamps, icaReader->unmixing(0, c));
-    }
+            // unmix into the components
+            for (int kChan = 0; kChan < nChans; ++kChan)
+            {
+                int chan = data->channelInds[icaChansRel[kChan]]; 
 
-    // remix and subtract
-    for (int c = 0; c < icaChans.size(); ++c)
-    {
-        int chan = icaChans[c];
-        buffer.addFrom(chan, 0, componentBuffer, 0, 0, nSamps, -icaReader->mixing(c, 0));
+                componentBuffer.addFrom(kComp, 0, buffer, chan, 0, nSamps,
+                    icaReader->unmixing(kComp, kChan));
+            }
+
+            // remix back into channels
+            for (int kChan = 0; kChan < nChans; ++kChan)
+            {
+                int chan = data->channelInds[icaChansRel[kChan]];
+
+                if (icaReader->keep)
+                {
+                    // if we're keeping selected components, have to clear first
+                    if (kComp == 0)
+                    {
+                        buffer.clear(chan, 0, nSamps);
+                    }
+                    buffer.addFrom(chan, 0, componentBuffer, kComp, 0, nSamps,
+                        icaReader->mixing(kChan, kComp));
+                }
+                else
+                {
+                    buffer.addFrom(chan, 0, componentBuffer, kComp, 0, nSamps,
+                        -icaReader->mixing(kChan, kComp));
+                }
+            }
+        }
     }
 }
 
 
 void ICANode::updateSettings()
 {
+    jassert(!CoreServices::getAcquisitionStatus()); // just to be sure...
+
     // have to wait till here to create the ICARunner because the editor and canvas must exist
-    icaRunner = new ICARunner(*this);
+    if (icaRunner == nullptr)
+    {
+        icaRunner = new ICARunner(*this);
+    }
 
     int nChans = getNumInputs();
 
@@ -337,8 +374,10 @@ void ICANode::updateSettings()
 
     // refresh subprocessor data
     uint32 newSubProc = 0;
-    subProcData.clear();
+    //subProcData.clear();
     subProcInfo.clear();
+
+    std::map<uint32, ScopedPointer<SubProcData>> newSubProcData;
 
     for (int c = 0; c < nChans; ++c)
     {
@@ -355,56 +394,67 @@ void ICANode::updateSettings()
             newSubProc = sourceFullId;
         }
 
-        auto subProcEntry = subProcData.find(sourceFullId);
-        if (subProcEntry == subProcData.end()) // not found
+        // see if it exists in the new map
+        auto subProcEntry = newSubProcData.find(sourceFullId);
+        if (subProcEntry != newSubProcData.end()) // found in new map
         {
-            SubProcData data;
-            data.Fs = chan->getSampleRate();
-            data.dsStride = jmax(int(data.Fs / icaTargetFs), 1);
-            data.dsOffset = 0;
-            data.channelInds.add(c);
-            data.dataCache = nullptr;
-
-            subProcData[sourceFullId] = data;
-
+            subProcEntry->second->channelInds.add(c);                  
+        }
+        else // not found in new map
+        {
             SubProcInfo info;
             info.sourceID = sourceID;
             info.subProcIdx = subProcIdx;
             info.sourceName = chan->getSourceName();
             subProcInfo[sourceFullId] = info;
-        }
-        else
-        {
-            subProcEntry->second.channelInds.add(c);
+
+            ScopedPointer<SubProcData> data;
+
+            // see whether there's a data entry in the old map to use
+            subProcEntry = subProcData.find(sourceFullId);
+            if (subProcEntry != subProcData.end()) // found in old map
+            {
+                // move from old map, for potential to keep using existing icaOutput
+                data = subProcEntry->second;
+                data->channelInds.clearQuick();
+            }
+            else
+            {
+                data = new SubProcData();
+            }
+
+            data->Fs = chan->getSampleRate();
+            data->dsStride = jmax(int(data->Fs / icaTargetFs), 1);
+            data->dsOffset = 0;
+            data->channelInds.add(c);
+
+            newSubProcData[sourceFullId] = data;
         }
     }
 
+    subProcData.swap(newSubProcData);
+
     currSubProc = newSubProc;
 
-    // create the dataCaches
-    int dataCacheIndex = 0;
-    int dataCacheSize = dataCaches.size();
+    // do things that require knowing # channels per subproc
     for (auto& subProcEntry : subProcData)
     {
-        int nChans = subProcEntry.second.channelInds.size();
+        SubProcData* data = subProcEntry.second;
+        int nChans = data->channelInds.size();
 
-        if (dataCacheIndex < dataCacheSize)
+        AudioBufferFifo::LockHandle dataHandle(data->dataCache);
+        dataHandle.resetWithSize(nChans, icaSamples);
+
+        // if there is an existing icaOutput, see whether it can be reused
+        // (requires that the enabled channels are in the range of channels in this subproc)
+        RWSync::ReadPtr<ICAOutput> icaReader(data->icaOutput);
+        jassert(icaReader.isValid()); // acquisition should be off...
+
+        if (icaReader.canRead() && icaReader->settings.enabledChannels.getLast() >= nChans)
         {
-            // reuse existing data cache object
-            AudioBufferFifo* data = dataCaches[dataCacheIndex];
-            jassert(data != nullptr);
-
-            subProcEntry.second.dataCache = data;
-            AudioBufferFifo::LockHandle dataHandle(*data);
-            dataHandle.resetWithSize(nChans, icaSamples);
+            // can't use, needs too many channels
+            data->icaOutput.reset();
         }
-        else
-        {
-            // create new data cache object
-            subProcEntry.second.dataCache = dataCaches.add(new AudioBufferFifo(nChans, icaSamples));
-        }
-
-        ++dataCacheIndex;
     }
 }
 
@@ -426,13 +476,11 @@ void ICANode::setTrainDurationSec(float dur)
     icaSamples = int(dur * icaTargetFs);
 
     // actually resize data caches
-    for (AudioBufferFifo* cache : dataCaches)
+    for (auto& subProcEntry : subProcData)
     {
-        if (cache != nullptr)
-        {
-            AudioBufferFifo::LockHandle hCache(*cache);
-            hCache.resizeKeepingData(icaSamples);
-        }
+        SubProcData* data = subProcEntry.second;
+        AudioBufferFifo::LockHandle hCache(data->dataCache);
+        hCache.resizeKeepingData(icaSamples);
     }
 }
 
@@ -447,6 +495,11 @@ void ICANode::setDirSuffix(const String& suffix)
     icaDirSuffix = suffix.isEmpty() ? String() : "_" + suffix;
 }
 
+
+bool ICANode::SubProcInfo::operator==(const SubProcInfo& other) const
+{
+    return sourceID == other.sourceID && subProcIdx == other.subProcIdx;
+}
 
 ICANode::SubProcInfo::operator String() const
 {
@@ -476,7 +529,7 @@ const Value& ICANode::getPctFullValue() const
         return nothingToCollect;
     }
 
-    return subProcData.at(currSubProc).dataCache->getPctFull();
+    return subProcData.at(currSubProc)->dataCache.getPctFull();
 }
 
 /****  ICARunner ****/
@@ -487,10 +540,8 @@ const String ICANode::ICARunner::weightFilename("output.wts");
 const String ICANode::ICARunner::sphereFilename("output.sph");
 
 ICANode::ICARunner::ICARunner(ICANode& proc)
-    : ThreadWithProgressWindow  ("Preparing...", false, true, 10000, String(), proc.getCanvas())
+    : ThreadWithProgressWindow  ("ICA Computation", true, true, 10000, String(), proc.getCanvas())
     , processor                 (proc)
-    , progress                  (0)
-    , pb                        (progress)
 {}
 
 void ICANode::ICARunner::run()
@@ -507,10 +558,22 @@ void ICANode::ICARunner::run()
         return;
     }
 
-    // enabled channels = intersection of active channels and channels of current subprocessor
-    settings.enabledChannels = processor.getEditor()->getActiveChannels();
-    const Array<int>& subProcChans = processor.subProcData[settings.subProc].channelInds;
-    settings.enabledChannels.removeValuesNotIn(subProcChans);
+    // enabled channels = which channels of current subprocessor are enabled
+    const Array<int>& subProcChans = processor.subProcData[settings.subProc]->channelInds;
+    int nSubProcChans = subProcChans.size();
+
+    settings.enabledChannels.clearQuick();
+    GenericEditor* ed = processor.getEditor();
+    for (int c = 0; c < nSubProcChans; ++c)
+    {
+        bool p, r, a;
+        int chan = subProcChans[c];
+        ed->getChannelSelectionState(chan, &p, &r, &a);
+        if (p)
+        {
+            settings.enabledChannels.add(c);
+        }
+    }
 
     if (settings.enabledChannels.isEmpty())
     {
@@ -527,7 +590,7 @@ void ICANode::ICARunner::run()
     else
     {
         // default to "bin" dir
-        baseDir = File::getSpecialLocation(File::hostApplicationPath);
+        baseDir = File::getSpecialLocation(File::hostApplicationPath).getParentDirectory();
     }
 
     // create a subdirectory for files, which we want to make sure doesn't exist yet
@@ -535,7 +598,7 @@ void ICANode::ICARunner::run()
     {
         if (threadShouldExit()) { return; }
 
-        String time = Time::getCurrentTime().toString(true, true, true, true);
+        String time = Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M-%S");
         File outDir = baseDir.getChildFile("ICA_" + time + processor.icaDirSuffix);
         if (!outDir.isDirectory())
         {
@@ -543,7 +606,7 @@ void ICANode::ICARunner::run()
             if (res.failed())
             {
                 reportError("Failed to make output directory ("
-                    + res.getErrorMessage() + ")");
+                    + res.getErrorMessage().trimEnd() + ")");
                 return;
             }
 
@@ -558,20 +621,12 @@ void ICANode::ICARunner::run()
     processResults();
 }
 
-void ICANode::ICARunner::threadComplete(bool userPressedCancel)
-{
-    // remove progress bar
-    getAlertWindow()->removeCustomComponent(0);
-}
-
 int ICANode::ICARunner::prepareICA()
 {
     setStatusMessage("Collecting data for ICA...");
-    progress = 0;
-    getAlertWindow()->addCustomComponent(&pb);
+    setProgress(0.0);
 
-    AudioBufferFifo* dataCache = processor.subProcData[settings.subProc].dataCache;
-    jassert(dataCache != nullptr);
+    AudioBufferFifo& dataCache = processor.subProcData[settings.subProc]->dataCache;
 
     File inputFile = settings.outputDir.getChildFile(inputFilename);
 
@@ -580,11 +635,11 @@ int ICANode::ICARunner::prepareICA()
     while (!written)
     {
         // wait for cache to fill up
-        while (!dataCache->isFull())
+        while (!dataCache.isFull())
         {
             if (threadShouldExit()) { return 0; }
 
-            progress = dataCache->getPctFull().getValue();
+            setProgress(double(dataCache.getPctFull().getValue()) / 100.0);
 
             wait(100);
         }
@@ -595,7 +650,7 @@ int ICANode::ICARunner::prepareICA()
 
             // shouldn't be contentious since the cache is supposedly full,
             // but avoid blocking with a try lock just in case
-            AudioBufferFifo::TryLockHandle hData(*dataCache);
+            AudioBufferFifo::TryLockHandle hData(dataCache);
             if (!hData.isLocked())
             {
                 wait(100);
@@ -604,7 +659,7 @@ int ICANode::ICARunner::prepareICA()
 
             // ok, we have the lock. so is the buffer really full or did the
             // length get increased at the last minute?
-            if (!dataCache->isFull())
+            if (!dataCache.isFull())
             {
                 // start over on waiting for it to fill up
                 break;
@@ -615,25 +670,25 @@ int ICANode::ICARunner::prepareICA()
             if (writeRes.wasOk())
             {
                 written = true;
-                nWritten = dataCache->getNumSamples();
+                nWritten = dataCache.getNumSamples();
             }
             else
             {
                 reportError("Failed to write data to input file ("
-                    + writeRes.getErrorMessage() + ")");
+                    + writeRes.getErrorMessage().trimEnd() + ")");
                 return 0;
             }
         }
     }
 
-    progress = 1;
-    getAlertWindow()->removeCustomComponent(0);
+    setProgress(1.0);
     return nWritten;
 }
 
 bool ICANode::ICARunner::performICA(int nSamples)
 {
     setStatusMessage("Running ICA...");
+    setProgress(0.0);
 
     // Write config file. For now, not configurable, but maybe can be in the future.
     File configFile = settings.outputDir.getChildFile(configFilename);
@@ -652,7 +707,7 @@ bool ICANode::ICARunner::performICA(int nSamples)
         configStream << "chans " << settings.enabledChannels.size() << '\n';
         configStream << "frames " << nSamples << '\n';
         configStream << "WeightsOutFile " << weightFilename << '\n';
-        configStream << "SphereFile" << sphereFilename << '\n';
+        configStream << "SphereFile " << sphereFilename << '\n';
         configStream << "maxsteps 512\n";
         configStream << "posact off\n";
         configStream << "annealstep 0.98\n";
@@ -662,18 +717,26 @@ bool ICANode::ICARunner::performICA(int nSamples)
         if (status.failed())
         {
             reportError("Failed to write to config file ("
-                + status.getErrorMessage() + ")");
+                + status.getErrorMessage().trimEnd() + ")");
             return false;
         }
     }
     
     // do it!
+    double progress = 0.05;
+    setProgress(progress);
+
     ICAProcess proc(configFile);
 
+    int samplesGuess = processor.icaSamples;
     while (proc.isRunning())
     {
         if (threadShouldExit()) { return false; }
         wait(200);
+
+        // stupid guess
+        progress += (icaTargetFs * 60 / samplesGuess * 0.01 * (1 - progress));
+        setProgress(progress);
     }
 
     if (proc.failedToRun())
@@ -689,12 +752,14 @@ bool ICANode::ICARunner::performICA(int nSamples)
         return false;
     }
 
+    setProgress(1.0);
     return true;
 }
 
 bool ICANode::ICARunner::processResults()
 {
     setStatusMessage("Processing ICA results...");
+    setProgress(0.0);
 
     // load weight and sphere matrices into Eigen Map objects
     int size = settings.enabledChannels.size();
@@ -711,6 +776,7 @@ bool ICANode::ICARunner::processResults()
     }
 
     if (threadShouldExit()) { return false; }
+    setProgress(0.2);
 
     HeapBlock<float> sphereBlock(sizeSq);
     File sphereFile = settings.outputDir.getChildFile(sphereFilename);
@@ -723,6 +789,7 @@ bool ICANode::ICARunner::processResults()
     }
 
     if (threadShouldExit()) { return false; }
+    setProgress(0.4);
 
     Eigen::Map<Eigen::MatrixXf> weights(weightBlock.getData(), size, size);
     Eigen::Map<Eigen::MatrixXf> sphere(sphereBlock.getData(), size, size);
@@ -730,20 +797,54 @@ bool ICANode::ICARunner::processResults()
     // now just need to convert this to mixing and unmixing
 
     // normalize sphere matrix by largest singular value
-    Eigen::BDCSVD<decltype(sphere)> svd(sphere);
+    Eigen::BDCSVD<Eigen::MatrixXf> svd(sphere);
     Eigen::MatrixXf normSphere = sphere / svd.singularValues()(0);
 
     if (threadShouldExit()) { return false; }
+    setProgress(0.6);
 
-    RWSync::WritePtr<ICAOutput> icaWriter(processor.icaCoefs);
-    jassert(icaWriter.isValid());
+    RWSync::Container<ICAOutput>& icaOutput = processor.subProcData[settings.subProc]->icaOutput;
+    RWSync::WritePtr<ICAOutput> icaWriter(icaOutput);
+    
+    // deal with the canvas also needing a write pointer at some point
+    // this is sketchy, should work but it's a little weird
+    while (!icaWriter.isValid())
+    {
+        if (threadShouldExit()) { return false; }
+
+        wait(100);
+        icaWriter.tryToMakeValid();
+    }
 
     icaWriter->settings = settings;
     icaWriter->unmixing = weights * normSphere;
     icaWriter->mixing = icaWriter->unmixing.inverse();
 
+    if (threadShouldExit()) { return false; }
+    setProgress(0.8);
+
+    // see if we can reuse an existing "components" array
+    // this is allowed if this subprocessor has an existing ICA transformation
+    // and it is based on the same channels.
+    RWSync::ReadPtr<ICAOutput> icaReader(icaOutput);
+    jassert(icaReader.isValid());
+
+    if (icaReader.canRead() && icaReader->settings.enabledChannels == settings.enabledChannels)
+    {
+        icaWriter->components = icaReader->components;
+        icaWriter->keep = icaReader->keep;
+    }
+    else
+    {
+        // default to rejecting the first channel.
+        icaWriter->components.clearQuick();
+        icaWriter->components.add(0);
+        icaWriter->keep = false;
+    }
+
     icaWriter.pushUpdate();
 
+    setProgress(1.0);
     return true;
 }
 
@@ -762,18 +863,17 @@ Result ICANode::ICARunner::readOutput(const File& source, HeapBlock<float>& dest
         return Result::fail("Failed to open " + fn);
     }
 
-    if (stream.read(dest, numel * sizeof(float)) != numel || !stream.isExhausted())
+    if (stream.getTotalLength() != numel * sizeof(float))
     {
-        Result status = stream.getStatus();
-        if (status.wasOk())
-        {
-            return Result::fail(fn + " has incorrect length");
-        }
-        else
-        {
-            return Result::fail("Failed to read " + fn 
-                + " (" + status.getErrorMessage() + ")");
-        }
+        return Result::fail(fn + " has incorrect length");
+    }
+
+    stream.read(dest, numel * sizeof(float));
+    Result status = stream.getStatus();
+    if (status.failed())
+    {
+        return Result::fail("Failed to read " + fn
+            + " (" + status.getErrorMessage().trimEnd() + ")");
     }
 
     return Result::ok();
@@ -783,6 +883,6 @@ void ICANode::ICARunner::reportError(const String& whatHappened)
 {
     setStatusMessage("Error: " + whatHappened);
     CoreServices::sendStatusMessage("ICA failed: " + whatHappened);
-    sleep(1500);
+    wait(5000);
 }
 

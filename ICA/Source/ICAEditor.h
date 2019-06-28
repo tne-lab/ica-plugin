@@ -41,12 +41,9 @@ namespace ICA
 
         void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
 
-        void updateSettings() override;
+        void buttonEvent(Button* button) override;
 
-        //// fixes getActiveChannels to return the right thing
-        //// even if the ChannelSelector hasn't been updated yet
-        //// (based on assumption that new channels are selected by default)
-        //Array<int> getActiveChannels(int expectedTotalChannels);
+        void updateSettings() override;
 
     private:
 
@@ -98,7 +95,9 @@ namespace ICA
         Label collectedIndicator;
 
         Label dirSuffixLabel;
-        Label dirSuffixTextBox;
+        Label dirSuffixTextBox; 
+
+        UtilityButton startButton;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };

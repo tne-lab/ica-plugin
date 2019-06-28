@@ -22,22 +22,58 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 using namespace ICA;
 
 ICAEditor::ICAEditor(ICANode* parentNode)
-    : VisualizerEditor  (parentNode, 200, false)
-    , subProcLabel      ("subProcLabel", "Input subprocessor:")
+    : VisualizerEditor  (parentNode, 220, false)
+    , subProcLabel      ("subProcLabel", "Input:")
     , subProcComboBox   ("subProcComboBox")
-    , durationLabel     ("durationLabel", "Training duration (s):")
+    , durationLabel     ("durationLabel", "Train for")
     , durationTextBox   ("durationTextBox", String(parentNode->getTrainDurationSec()))
-    , collectedLabel    ("collectedLabel", "Collected:")
+    , collectedLabel    ("collectedLabel", "s   (")
     , collectedIndicator("collectedIndicator", "")
     , dirSuffixLabel    ("dirSuffixLabel", "Output dir suffix:")
     , dirSuffixTextBox  ("dirSuffixTextBox", parentNode->getDirSuffix())
+    , startButton       ("START", Font("Default", 12, Font::plain))
 {
     // we always want to have a canvas available, makes things a lot simpler
     canvas = new ICACanvas(parentNode);
 
-    // TODO lay out all the UI elements
+    subProcLabel.setBounds(10, 30, 50, 20);
+    addAndMakeVisible(subProcLabel);
 
+    subProcComboBox.setBounds(60, 30, 130, 22);
+    subProcComboBox.addListener(this);
+    addAndMakeVisible(subProcComboBox);
+
+    durationLabel.setBounds(10, 55, 60, 20);
+    addAndMakeVisible(durationLabel);
+
+    durationTextBox.setBounds(70, 55, 40, 20);
+    durationTextBox.setEditable(true);
+    durationTextBox.addListener(this);
+    durationTextBox.setColour(Label::backgroundColourId, Colours::grey);
+    durationTextBox.setColour(Label::textColourId, Colours::white);
+    addAndMakeVisible(durationTextBox);
+
+    collectedLabel.setBounds(110, 55, 30, 20);
+    addAndMakeVisible(collectedLabel);
+
+    collectedIndicator.setBounds(130, 55, 80, 20);
     collectedIndicator.getTextValue().referTo(parentNode->getPctFullValue());
+    addAndMakeVisible(collectedIndicator);
+
+    dirSuffixLabel.setBounds(10, 80, 110, 20);
+    addAndMakeVisible(dirSuffixLabel);
+
+    dirSuffixTextBox.setBounds(125, 80, 50, 20);
+    dirSuffixTextBox.setEditable(true);
+    dirSuffixTextBox.addListener(this);
+    dirSuffixTextBox.setColour(Label::backgroundColourId, Colours::grey);
+    dirSuffixTextBox.setColour(Label::textColourId, Colours::white);
+    addAndMakeVisible(dirSuffixTextBox);
+
+    startButton.setBounds(40, 105, 140, 20);
+    startButton.addListener(this);
+    
+    addAndMakeVisible(startButton);
 }
 
 
@@ -94,6 +130,18 @@ void ICAEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
     }
 }
 
+
+void ICAEditor::buttonEvent(Button* button)
+{
+    auto icaNode = static_cast<ICANode*>(getProcessor());
+
+    if (button == &startButton)
+    {
+        icaNode->startICA();
+    }
+}
+
+
 void ICAEditor::updateSettings()
 {
     // get subprocessor info from the processor and update combo box
@@ -112,36 +160,3 @@ void ICAEditor::updateSettings()
 
     collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
 }
-
-//
-//Array<int> ICAEditor::getActiveChannels(int expectedTotalChannels)
-//{
-//    int numChannelButtons = channelSelector->getNumChannels();
-//
-//    Array<int> activeChans = GenericEditor::getActiveChannels();
-//
-//    if (expectedTotalChannels < numChannelButtons)
-//    {
-//        // remove any that are too large
-//        int nActiveChans = activeChans.size();
-//        for (int i = 0, *it = activeChans.begin(); i < nActiveChans; ++i)
-//        {
-//            if (*it >= expectedTotalChannels)
-//            {
-//                activeChans.remove(it);
-//            }
-//            else
-//            {
-//                ++it;
-//            }
-//        }
-//    }
-//
-//    // insert new channels at end
-//    for (int newChan = numChannelButtons; newChan < expectedTotalChannels; ++newChan)
-//    {
-//        activeChans.add(newChan);
-//    }
-//
-//    return activeChans;
-//}

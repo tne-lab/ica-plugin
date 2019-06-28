@@ -32,7 +32,7 @@ namespace ICA
     class AudioBufferFifo
     {
     public:
-        AudioBufferFifo(int numChans, int numSamps);
+        explicit AudioBufferFifo(int numChans = 0, int numSamps = 0);
 
         int getNumSamples() const;
 
@@ -126,6 +126,9 @@ namespace ICA
 
         void updateSettings() override;
 
+        // replace any current ICA transformation with a dummy one that does nothing
+        void resetICA();
+
         // access stuff
 
         Component* getCanvas() const;
@@ -142,6 +145,9 @@ namespace ICA
             uint16 subProcIdx;
             String sourceName;
 
+            // source ID and subproc index uniquely identify the subprocessor
+            bool operator==(const SubProcInfo& other) const;
+
             // display name for the ComboBox
             operator String() const;
         };
@@ -154,12 +160,27 @@ namespace ICA
 
     private:
 
-        static const float icaTargetFs;
-        int icaSamples; // updated from editor
+        // info specific to an ICA run
+        struct ICASettings
+        {
+            uint32 subProc = 0;
 
-        String icaDirSuffix; // updated from editor
+            // indices *of this subprocessor's channels* included in transformation
+            // will always be sorted low to high.
+            Array<int> enabledChannels;
+            File outputDir;
+        };
 
-        // for colllecting data from each subprocessor during acquisition
+        // for calculating the selection matrix
+        struct ICAOutput
+        {
+            Eigen::MatrixXf mixing;
+            Eigen::MatrixXf unmixing;
+            Array<int> components; // to keep or reject
+            bool keep = false; // true == keep select components, false == reject
+            ICASettings settings;
+        };
+
         struct SubProcData
         {
             float Fs;
@@ -168,37 +189,18 @@ namespace ICA
 
             Array<int> channelInds; // (indices in this processor)
 
-            AudioBufferFifo* dataCache;
-        };
+            // for colllecting data for ICA during acquisition
+            AudioBufferFifo dataCache;
 
-        std::map<uint32, SubProcInfo> subProcInfo;
-        std::map<uint32, SubProcData> subProcData;
-        uint32 currSubProc; // full source ID
-
-        // what is shown on the editor when there is no subprocessor (no inputs)
-        static const Value nothingToCollect;
-
-        // owns the data (allows reuse between updates)
-        // should be accessed through a SubProcInfo struct though.
-        OwnedArray<AudioBufferFifo> dataCaches;
-
-        // temporary storage for ICA components
-        AudioSampleBuffer componentBuffer;
-
-        // info specific to an ICA run
-        struct ICASettings
-        {
-            uint32 subProc;
-            Array<int> enabledChannels;
-            File outputDir;
+            // writers (with lock): ICARunner, canvas update
+            // readers (during acq): ICARunner, canvas update, process function
+            RWSync::FixedContainer<ICAOutput, 3> icaOutput;
         };
 
         class ICARunner : public ThreadWithProgressWindow
         {
         public:
             ICARunner(ICANode& proc);
-
-            void threadComplete(bool userPressedCancel) override;
 
             void run() override;
 
@@ -222,9 +224,6 @@ namespace ICA
             ICASettings settings;
             ICANode& processor;
 
-            double progress;
-            ProgressBar pb; // hold it so we can control it manually
-
             static const String inputFilename;
             static const String configFilename;
             static const String weightFilename;
@@ -233,22 +232,22 @@ namespace ICA
 
         ScopedPointer<ICARunner> icaRunner;
 
-        // for calculating the selection matrix
-        struct ICAOutput
-        {
-            Eigen::MatrixXf mixing;
-            Eigen::MatrixXf unmixing;
-            ICASettings settings;
-        };
+        int icaSamples; // updated from editor
 
-        // writer: ICARunner
-        // reader: TransformationUpdater
-        RWSync::FixedContainer<ICAOutput> icaCoefs;
+        String icaDirSuffix; // updated from editor
 
-        // writer: GUI thread
-        // reader: TransformationUpdater
-        // TODO, for now just take first component
-        //RWSync::FixedContainer<Eigen::VectorXf> componentsToKeep;
+        // ordered so that combobox is consistent/goes in lexicographic order of subproc
+        std::map<uint32, SubProcInfo> subProcInfo;
+        std::map<uint32, ScopedPointer<SubProcData>> subProcData;
+        uint32 currSubProc; // full source ID
+
+        // temporary storage for ICA components
+        AudioSampleBuffer componentBuffer;
+
+        static const float icaTargetFs;
+
+        // what is shown on the editor when there is no subprocessor (no inputs)
+        static const Value nothingToCollect;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICANode);
     };
