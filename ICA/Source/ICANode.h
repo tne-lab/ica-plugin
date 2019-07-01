@@ -27,6 +27,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace ICA
 {
+    using Matrix = Eigen::MatrixXf;
+    using MatrixMap = Eigen::Map<Eigen::MatrixXf>;
+    using MatrixRef = Eigen::Ref<const Eigen::MatrixXf>;
+
     // to cache input data to be used to compute ICA
     // modifications must be done through a handle which is secured by a mutex.
     class AudioBufferFifo
@@ -98,7 +102,7 @@ namespace ICA
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBufferFifo);
     };
 
-    class ICANode : public GenericProcessor
+    class ICANode : public GenericProcessor, public ThreadWithProgressWindow
     {
     public:
         ICANode();
@@ -111,6 +115,9 @@ namespace ICA
 
         // returns false on error, including if ICA is already running
         bool startICA();
+
+        // replace any current ICA transformation with a dummy one that does nothing
+        void resetICA(uint32 subproc);
 
         //bool enable() override;
 
@@ -126,8 +133,8 @@ namespace ICA
 
         void updateSettings() override;
 
-        // replace any current ICA transformation with a dummy one that does nothing
-        void resetICA();
+        // Thread function - does an ICA run.
+        void run() override;
 
         // access stuff
 
@@ -156,29 +163,28 @@ namespace ICA
         uint32 getCurrSubProc() const;
         void setCurrSubProc(uint32 fullId);
 
+        // for editor indicators
         const Value& getPctFullValue() const;
+        const Value& getICAOutputDirValue() const;
+
+        ScopedPointer<ScopedReadLock> getICAOperation() const;
 
     private:
 
-        // info specific to an ICA run
-        struct ICASettings
-        {
-            uint32 subProc = 0;
-
-            // indices *of this subprocessor's channels* included in transformation
-            // will always be sorted low to high.
-            Array<int> enabledChannels;
-            File outputDir;
-        };
-
         // for calculating the selection matrix
-        struct ICAOutput
+        struct ICAOperation
         {
-            Eigen::MatrixXf mixing;
-            Eigen::MatrixXf unmixing;
-            Array<int> components; // to keep or reject
-            bool keep = false; // true == keep select components, false == reject
-            ICASettings settings;
+            Matrix mixing;
+            Matrix unmixing;
+            Array<int> enabledChannels; // of this subprocessor's channels, which to include in ica
+            Array<int> components;      // which components to keep or reject
+            bool keep = false;          // true == keep selected components, false == reject
+            //ICASettings settings;
+
+            inline bool isNoop() const
+            {
+                return enabledChannels.isEmpty();
+            }
         };
 
         struct SubProcData
@@ -190,47 +196,32 @@ namespace ICA
             Array<int> channelInds; // (indices in this processor)
 
             // for colllecting data for ICA during acquisition
-            AudioBufferFifo dataCache;
+            ScopedPointer<AudioBufferFifo> dataCache;
 
-            // writers (with lock): ICARunner, canvas update
-            // readers (during acq): ICARunner, canvas update, process function
-            RWSync::FixedContainer<ICAOutput, 3> icaOutput;
+            ScopedPointer<ICAOperation> icaOp;
+            Value icaDir; // separate from icaOp so its value can be referred to across updates to icaOp
+            String icaParentDir;
+            ReadWriteLock icaMutex; // controls icaOp, icaDir, and icaParentDir
         };
 
-        class ICARunner : public ThreadWithProgressWindow
-        {
-        public:
-            ICARunner(ICANode& proc);
+        // Collect data from the process thread and write to a file.
+        // Returns # of samples written, or 0 on failure
+        int prepareICA();
 
-            void run() override;
+        // Call the binica executable on our sample data
+        bool performICA(int nSamples);
 
-        private:
+        // Read in output from binica and compute fields of ICAOutput
+        bool processResults();
 
-            // Collect data from the process thread and write to a file.
-            // Returns # of samples written, or 0 on failure
-            int prepareICA();
+        // Helper to read ICA output
+        static Result readOutput(const File& source, HeapBlock<float>& dest, int numel);
 
-            // Call the binica executable on our sample data
-            bool performICA(int nSamples);
+        // Helper to save processed ICA transformation
+        static Result saveMatrix(const File &dest, const MatrixRef& mat);
 
-            // Read in output from binica and compute fields of ICAOutput
-            bool processResults();
-
-            // Helper to read ICA output
-            static Result readOutput(const File& source, HeapBlock<float>& dest, int numel);
-
-            void reportError(const String& whatHappened);
-
-            ICASettings settings;
-            ICANode& processor;
-
-            static const String inputFilename;
-            static const String configFilename;
-            static const String weightFilename;
-            static const String sphereFilename;
-        };
-
-        ScopedPointer<ICARunner> icaRunner;
+        // To report an error during an ICA run
+        void reportError(const String& whatHappened);
 
         int icaSamples; // updated from editor
 
@@ -238,16 +229,34 @@ namespace ICA
 
         // ordered so that combobox is consistent/goes in lexicographic order of subproc
         std::map<uint32, SubProcInfo> subProcInfo;
-        std::map<uint32, ScopedPointer<SubProcData>> subProcData;
+        std::map<uint32, SubProcData> subProcData;
         uint32 currSubProc; // full source ID
 
-        // temporary storage for ICA components
-        AudioSampleBuffer componentBuffer;
+        // for temporary storage while calculating ICA operation
+        struct
+        {
+            ScopedPointer<ICAOperation> op;
+            File dir;
+            uint32 subProc;
+        } icaRunInfo;
 
+        // temporary storage for ICA components
+        HeapBlock<float> componentBuffer;
+        
+        // constants
+        
         static const float icaTargetFs;
 
         // what is shown on the editor when there is no subprocessor (no inputs)
-        static const Value nothingToCollect;
+        static const Value noInputVal;
+        static const Value emptyVal;
+
+        static const String inputFilename;
+        static const String configFilename;
+        static const String weightFilename;
+        static const String sphereFilename;
+        static const String mixingFilename;
+        static const String unmixingFilename;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICANode);
     };
@@ -280,6 +289,35 @@ namespace ICA
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAProcess);
     };
+
+
+    // not sure why this doesn't already exist
+    class RWLockReadAdapter
+    {
+    public:
+        RWLockReadAdapter(const ReadWriteLock& lock) noexcept;
+        void enter() const noexcept;
+        bool tryEnter() const noexcept;
+        void exit() const noexcept;
+
+    private:
+        const ReadWriteLock& lock;
+    };
+
+    class RWLockWriteAdapter
+    {
+    public:
+        RWLockWriteAdapter(const ReadWriteLock& lock) noexcept;
+        void enter() const noexcept;
+        bool tryEnter() const noexcept;
+        void exit() const noexcept;
+
+    private:
+        const ReadWriteLock& lock;
+    };
+
+    using ScopedReadTryLock = GenericScopedTryLock<RWLockReadAdapter>;
+    using ScopedWriteTryLock = GenericScopedTryLock<RWLockWriteAdapter>;
 }
 
 #endif // ICA_NODE_H_DEFINED

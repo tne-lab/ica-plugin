@@ -30,6 +30,7 @@ namespace ICA
         : public VisualizerEditor
         , public Label::Listener
         , public ComboBox::Listener
+        , public Value::Listener
     {
     public:
         ICAEditor(ICANode* parentNode);
@@ -42,6 +43,8 @@ namespace ICA
         void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
 
         void buttonEvent(Button* button) override;
+
+        void valueChanged(Value& value) override;
 
         void updateSettings() override;
 
@@ -98,6 +101,11 @@ namespace ICA
         Label dirSuffixTextBox; 
 
         UtilityButton startButton;
+
+        Label currICAIndicator;
+        UtilityButton clearButton;
+
+        LoadButton loadButton;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };

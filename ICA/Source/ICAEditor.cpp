@@ -32,6 +32,8 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     , dirSuffixLabel    ("dirSuffixLabel", "Output dir suffix:")
     , dirSuffixTextBox  ("dirSuffixTextBox", parentNode->getDirSuffix())
     , startButton       ("START", Font("Default", 12, Font::plain))
+    , currICAIndicator  ("currICAIndicator", "")
+    , clearButton       ("X", Font("Default", 12, Font::plain))
 {
     // we always want to have a canvas available, makes things a lot simpler
     canvas = new ICACanvas(parentNode);
@@ -70,10 +72,23 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     dirSuffixTextBox.setColour(Label::textColourId, Colours::white);
     addAndMakeVisible(dirSuffixTextBox);
 
-    startButton.setBounds(40, 105, 140, 20);
-    startButton.addListener(this);
-    
+    startButton.setBounds(10, 105, 50, 20);
+    startButton.addListener(this);    
     addAndMakeVisible(startButton);
+    
+    currICAIndicator.setBounds(65, 105, 120, 20);
+    currICAIndicator.getTextValue().referTo(parentNode->getICAOutputDirValue());
+    currICAIndicator.getTextValue().addListener(this);
+    addAndMakeVisible(currICAIndicator);
+
+    clearButton.setBounds(185, 105, 20, 20);
+    clearButton.addListener(this);
+    clearButton.setVisible(!currICAIndicator.getText().isEmpty());
+    addChildComponent(clearButton);
+
+    loadButton.addListener(this);
+    loadButton.setBounds(desiredWidth - 70, 5, 15, 15);
+    addAndMakeVisible(loadButton);
 }
 
 
@@ -125,8 +140,9 @@ void ICAEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
     {
         icaNode->setCurrSubProc(comboBoxThatHasChanged->getSelectedId());
 
-        // update pct full indicator
+        // update indicators
         collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
+        currICAIndicator.getTextValue().referTo(icaNode->getICAOutputDirValue());
     }
 }
 
@@ -138,6 +154,24 @@ void ICAEditor::buttonEvent(Button* button)
     if (button == &startButton)
     {
         icaNode->startICA();
+    }
+    else if (button == &clearButton)
+    {
+        icaNode->resetICA(subProcComboBox.getSelectedId());
+    }
+    else if (button == &loadButton)
+    {
+
+    }
+}
+
+
+void ICAEditor::valueChanged(Value& value)
+{
+    if (value.refersToSameSourceAs(currICAIndicator.getTextValue()))
+    {
+        // "X" should be visible iff there is an ICA operation loaded for the current subproc
+        clearButton.setVisible(!value.toString().isEmpty());
     }
 }
 
@@ -159,4 +193,5 @@ void ICAEditor::updateSettings()
     subProcComboBox.setSelectedId(currSubProc, dontSendNotification);
 
     collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
+    currICAIndicator.getTextValue().referTo(icaNode->getICAOutputDirValue());
 }
