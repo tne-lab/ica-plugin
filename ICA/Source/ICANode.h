@@ -23,7 +23,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <map>
 #include <atomic>
 #include <Eigen/Dense>
-#include <RWSync/RWSyncContainer.h>
 
 namespace ICA
 {
@@ -119,22 +118,25 @@ namespace ICA
         // replace any current ICA transformation with a dummy one that does nothing
         void resetICA(uint32 subproc);
 
+        void loadICA(const File& configFile);
+
         //bool enable() override;
 
         bool disable() override;
 
         void process(AudioSampleBuffer& buffer) override;
 
+        void updateSettings() override;
+
+        // Thread function - does an ICA run.
+        void run() override;
+
+        // TODO
         /** Saving custom settings to XML. */
         //void saveCustomParametersToXml(XmlElement* parentElement) override;
 
         /** Load custom settings from XML*/
         //void loadCustomParametersFromXml() override;
-
-        void updateSettings() override;
-
-        // Thread function - does an ICA run.
-        void run() override;
 
         // access stuff
 
@@ -169,6 +171,8 @@ namespace ICA
 
         ScopedPointer<ScopedReadLock> getICAOperation() const;
 
+        static File getICABaseDir();
+
     private:
 
         // for calculating the selection matrix
@@ -179,7 +183,6 @@ namespace ICA
             Array<int> enabledChannels; // of this subprocessor's channels, which to include in ica
             Array<int> components;      // which components to keep or reject
             bool keep = false;          // true == keep selected components, false == reject
-            //ICASettings settings;
 
             inline bool isNoop() const
             {
@@ -200,28 +203,48 @@ namespace ICA
 
             ScopedPointer<ICAOperation> icaOp;
             Value icaDir; // separate from icaOp so its value can be referred to across updates to icaOp
-            String icaParentDir;
+            String icaConfigPath;
             ReadWriteLock icaMutex; // controls icaOp, icaDir, and icaParentDir
+        };
+
+        // for temporary storage while calculating ICA operation
+        struct ICARunInfo
+        {
+            uint32 subProc;
+            int nSamples = 0;
+            int nChannels = 0;
+            File config;
+            File weight;
+            File sphere;
+            ScopedPointer<ICAOperation> op;
         };
 
         // Collect data from the process thread and write to a file.
         // Returns # of samples written, or 0 on failure
-        int prepareICA();
+        Result prepareICA(ICARunInfo& info);
 
         // Call the binica executable on our sample data
-        bool performICA(int nSamples);
+        Result performICA(ICARunInfo& info);
 
         // Read in output from binica and compute fields of ICAOutput
-        bool processResults();
-
-        // Helper to read ICA output
-        static Result readOutput(const File& source, HeapBlock<float>& dest, int numel);
-
-        // Helper to save processed ICA transformation
-        static Result saveMatrix(const File &dest, const MatrixRef& mat);
+        Result processResults(ICARunInfo& info);
 
         // To report an error during an ICA run
         void reportError(const String& whatHappened);
+
+        // Returns false if unable to acquire the lock
+        // does not have to be run in the thread
+        bool tryToSetNewICAOp(ICARunInfo& info);
+
+        // For use when loading data. Uses config file to fill in
+        // other information (including the transformation itself)
+        Result populateInfoFromConfig(ICARunInfo& info);
+
+        // Helper to read ICA output
+        static Result readMatrix(const File& source, HeapBlock<float>& dest, int numel);
+
+        // Helper to save processed ICA transformation
+        static Result saveMatrix(const File &dest, const MatrixRef& mat);
 
         int icaSamples; // updated from editor
 
@@ -232,14 +255,6 @@ namespace ICA
         std::map<uint32, SubProcData> subProcData;
         uint32 currSubProc; // full source ID
 
-        // for temporary storage while calculating ICA operation
-        struct
-        {
-            ScopedPointer<ICAOperation> op;
-            File dir;
-            uint32 subProc;
-        } icaRunInfo;
-
         // temporary storage for ICA components
         HeapBlock<float> componentBuffer;
         
@@ -248,8 +263,10 @@ namespace ICA
         static const float icaTargetFs;
 
         // what is shown on the editor when there is no subprocessor (no inputs)
-        static const Value noInputVal;
-        static const Value emptyVal;
+
+        // static Values cause "leaked object" assertions for some reason...
+        const Value noInputVal  { var("no input)") };
+        const Value emptyVal    { var("") };
 
         static const String inputFilename;
         static const String configFilename;

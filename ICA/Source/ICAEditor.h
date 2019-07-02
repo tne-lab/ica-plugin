@@ -37,7 +37,6 @@ namespace ICA
 
         Visualizer* createNewCanvas() override;
 
-        //TODO make sure to normalize the dirSuffix here, i.e. call createLegalFileName
         void labelTextChanged(Label* labelThatHasChanged) override;
 
         void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
@@ -47,6 +46,9 @@ namespace ICA
         void valueChanged(Value& value) override;
 
         void updateSettings() override;
+
+        void startAcquisition() override;
+        void stopAcquisition() override;
 
     private:
 
@@ -90,15 +92,18 @@ namespace ICA
 
         Label subProcLabel;
         ComboBox subProcComboBox;
+        static const String subProcTooltip;
 
         Label durationLabel;
         Label durationTextBox;
+        static const String durationTooltip;
 
         Label collectedLabel;
         Label collectedIndicator;
 
         Label dirSuffixLabel;
-        Label dirSuffixTextBox; 
+        Label dirSuffixTextBox;
+        static const String dirSuffixTooltip;
 
         UtilityButton startButton;
 

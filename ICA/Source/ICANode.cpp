@@ -24,215 +24,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 using namespace ICA;
 
 
-/****  AudioBufferFifo ****/
-
-AudioBufferFifo::AudioBufferFifo(int numChans, int numSamps)
-    : data          (new AudioSampleBuffer(numChans, numSamps))
-    , full          (false)
-{
-    reset();
-}
-
-int AudioBufferFifo::getNumSamples() const
-{
-    return data->getNumSamples();
-}
-
-const Value& AudioBufferFifo::getPctFull() const
-{
-    return pctFull;
-}
-
-bool AudioBufferFifo::isFull() const
-{
-    return full.load(std::memory_order_acquire);
-}
-
-void AudioBufferFifo::updateFullStatus()
-{
-    int numSamps = data->getNumSamples();
-    full.store(numWritten == numSamps, std::memory_order_release);
-    int pctFullInt = numSamps == 0 ? 100 : int(100.0 * numWritten / numSamps + 0.5);
-    pctFull = String(pctFullInt) + "% full)";
-}
-
-void AudioBufferFifo::reset()
-{
-    startPoint = 0;
-    numWritten = 0;
-    pctFull = "0% full)";
-    full = false;
-}
-
-
-/**  AudioBufferFifo handles **/
-
-AudioBufferFifo::Handle::Handle(AudioBufferFifo& fifoIn)
-    : fifo(fifoIn)
-{}
-
-void AudioBufferFifo::Handle::reset()
-{
-    if (!isValid()) { return; }
-
-    fifo.reset();
-}
-
-void AudioBufferFifo::Handle::resetWithSize(int numChans, int numSamps)
-{
-    if (!isValid()) { return; }
-
-    jassert(numChans >= 0 && numSamps >= 0);
-    fifo.data->setSize(numChans, numSamps);
-    fifo.reset();
-}
-
-
-void AudioBufferFifo::Handle::copySample(const AudioSampleBuffer& source, 
-    const Array<int>& channels, int sample)
-{
-    if (!isValid()) { return; }
-
-    int numSamps = fifo.data->getNumSamples();
-    if (numSamps < 1) { return; }
-
-    int numChans = fifo.data->getNumChannels();
-    jassert(channels.size() == numChans);
-
-    int destSample = (fifo.startPoint + fifo.numWritten) % numSamps;
-
-    for (int c = 0; c < numChans; ++c)
-    {
-        int sourceChan = channels[c];
-        jassert(sourceChan >= 0 && sourceChan < source.getNumChannels());
-        fifo.data->setSample(c, destSample, source.getSample(sourceChan, sample));
-    }
-
-    if (fifo.numWritten < numSamps)
-    {
-        fifo.numWritten++;
-    }
-    else
-    {
-        jassert(destSample == fifo.startPoint);
-        fifo.startPoint = (fifo.startPoint + 1) % numSamps;
-    }
-
-    fifo.updateFullStatus();
-}
-
-
-void AudioBufferFifo::Handle::resizeKeepingData(int numSamps)
-{
-    if (!isValid()) { return; }
-
-    int numChans = fifo.data->getNumChannels();
-    int currNumSamps = fifo.data->getNumSamples();
-
-    if (currNumSamps == numSamps) { return; }
-
-    if (fifo.startPoint + fifo.numWritten <= numSamps)
-    {
-        // all in one block that will fit in new size - no special handling required
-        fifo.data->setSize(numChans, numSamps, true);
-    }
-    else
-    {
-        ScopedPointer<AudioSampleBuffer> tempData(new AudioSampleBuffer(numChans, numSamps));
-
-        int newNumWritten = jmin(fifo.numWritten, numSamps);
-
-        // could use an AbstractFifo maybe but w/e
-        int block1Start = fifo.startPoint;
-        int block1Size = jmin(newNumWritten, currNumSamps - block1Start);
-
-        int block2Start = 0;
-        int block2Size = newNumWritten - block1Size;
-
-        for (int c = 0; c < numChans; ++c)
-        {
-            tempData->copyFrom(c, 0, *fifo.data, c, block1Start, block1Size);
-            tempData->copyFrom(c, block1Size, *fifo.data, c, block2Start, block2Size);
-        }
-
-        fifo.data.swapWith(tempData);
-        fifo.startPoint = 0;
-        fifo.numWritten = newNumWritten;
-    }
-
-    fifo.updateFullStatus();
-}
-
-
-Result AudioBufferFifo::Handle::writeChannelsToFile(const File& file, const Array<int>& channels)
-{
-    if (!isValid())
-    {
-        jassertfalse;
-        return Result::fail("Invalid handle to data cache");
-    }
-
-    FileOutputStream stream(file);
-    if (!stream.openedOk())
-    {
-        return stream.getStatus();
-    }
-
-    jassert(fifo.full.load(std::memory_order_acquire)); // should only be called when the FIFO is full...
-    
-    int numChans = fifo.data->getNumChannels();
-    int numSamps = fifo.data->getNumSamples();
-
-    for (int chan : channels)
-    {
-        jassert(chan >= 0 && chan < numChans);
-    }
-    
-    for (int s = 0; s < numSamps; ++s)
-    {
-        int samp = (fifo.startPoint + s) % numSamps;
-
-        for (int chan : channels)
-        {
-            if (!stream.writeFloat(fifo.data->getSample(chan, samp)))
-            {
-                return stream.getStatus();
-            }
-        }
-    }
-
-    stream.flush();
-    return stream.getStatus();
-}
-
-bool AudioBufferFifo::Handle::isValid() const
-{
-    return true;
-}
-
-
-AudioBufferFifo::LockHandle::LockHandle(AudioBufferFifo& fifoIn)
-    : Handle        ({ fifoIn })
-    , ScopedLock    (fifoIn.mutex)
-{}
-
-AudioBufferFifo::TryLockHandle::TryLockHandle(AudioBufferFifo& fifoIn)
-    : Handle        ({ fifoIn })
-    , ScopedTryLock (fifoIn.mutex)
-{}
-
-bool AudioBufferFifo::TryLockHandle::isValid() const
-{
-    return isLocked();
-}
-
-
 /*****  ICANode *****/
 
 // static members
 const float ICANode::icaTargetFs    (500.0f);
-const Value ICANode::noInputVal     (var("no input)"));
-const Value ICANode::emptyVal       (var(""));
 
 const String ICANode::inputFilename("input.floatdata");
 const String ICANode::configFilename("binica.sc");
@@ -285,7 +80,28 @@ void ICANode::resetICA(uint32 subproc)
 
         data.icaOp = new ICAOperation();
         data.icaDir.setValue("");
-        data.icaParentDir.clear();
+        data.icaConfigPath.clear();
+    }
+}
+
+void ICANode::loadICA(const File& configFile)
+{
+    // populate a new ICARunInfo struct
+    ICARunInfo loadedInfo;
+    loadedInfo.op = new ICAOperation();
+    loadedInfo.config = configFile;
+    loadedInfo.subProc = currSubProc;
+
+    Result res = populateInfoFromConfig(loadedInfo);
+    if (res.failed())
+    {
+        CoreServices::sendStatusMessage("ICA load failed: " + res.getErrorMessage());
+        return;
+    }
+
+    while (!tryToSetNewICAOp(loadedInfo))
+    {
+        Thread::sleep(100);
     }
 }
 
@@ -452,7 +268,7 @@ void ICANode::updateSettings()
                 const ScopedWriteLock icaWriteLock(oldData.icaMutex);
                 newData.icaOp.swapWith(oldData.icaOp);
                 newData.icaDir.referTo(oldData.icaDir);
-                newData.icaParentDir.swapWith(oldData.icaParentDir);
+                newData.icaConfigPath.swapWith(oldData.icaConfigPath);
             }
             else
             {
@@ -479,7 +295,7 @@ void ICANode::updateSettings()
             // can't use, needs too many channels - reset to no-op
             data.icaOp = new ICAOperation();
             data.icaDir = String();
-            data.icaParentDir.clear();
+            data.icaConfigPath.clear();
         }
     }
 
@@ -572,26 +388,39 @@ const Value& ICANode::getICAOutputDirValue() const
     return subProcData.at(currSubProc).icaDir;
 }
 
+
+File ICANode::getICABaseDir()
+{
+    if (CoreServices::getRecordingStatus())
+    {
+        return CoreServices::RecordNode::getRecordingPath();
+    }
+
+    return File::getSpecialLocation(File::hostApplicationPath).getParentDirectory();
+}
+
 // ICA thread
 
 void ICANode::run()
 {
     setStatusMessage("Preparing...");
 
-    icaRunInfo.op = new ICAOperation();
+    ICARunInfo info;
+
+    info.op = new ICAOperation();
 
     // collect current settings
 
-    icaRunInfo.subProc = currSubProc;
+    info.subProc = currSubProc;
 
-    if (icaRunInfo.subProc == 0)
+    if (info.subProc == 0)
     {
         reportError("No subprocessor selected");
         return;
     }
 
     // enabled channels = which channels of current subprocessor are enabled
-    const Array<int>& subProcChans = subProcData[icaRunInfo.subProc].channelInds;
+    const Array<int>& subProcChans = subProcData[info.subProc].channelInds;
     int nSubProcChans = subProcChans.size();
 
     GenericEditor* ed = getEditor();
@@ -602,27 +431,20 @@ void ICANode::run()
         ed->getChannelSelectionState(chan, &p, &r, &a);
         if (p)
         {
-            icaRunInfo.op->enabledChannels.add(c);
+            info.op->enabledChannels.add(c);
         }
     }
 
-    if (icaRunInfo.op->enabledChannels.isEmpty())
+    if (info.op->enabledChannels.size() < 2)
     {
-        reportError("No channels are enabled for the current subprocessor");
+        reportError("At least 2 channels must be enabled to run ICA");
         return;
     }
 
+    info.nChannels = info.op->enabledChannels.size();
+
     // find directory to save everything
-    File baseDir;
-    if (CoreServices::getRecordingStatus())
-    {
-        baseDir = CoreServices::RecordNode::getRecordingPath();
-    }
-    else
-    {
-        // default to "bin" dir
-        baseDir = File::getSpecialLocation(File::hostApplicationPath).getParentDirectory();
-    }
+    File baseDir = getICABaseDir();
 
     // create a subdirectory for files, which we want to make sure doesn't exist yet
     while (true)
@@ -641,25 +463,41 @@ void ICANode::run()
                 return;
             }
 
-            icaRunInfo.dir = outDir;
+            info.config = outDir.getChildFile(configFilename);
             break;
         }
     }
 
-    int nSamples = prepareICA();
-    if (nSamples == 0 || threadShouldExit()) { return; }
-    if (!performICA(nSamples) || threadShouldExit()) { return; }
-    processResults();
+    using ICASubFunc = Result(ICANode::*)(ICARunInfo&);
+    for (ICASubFunc sub : { &ICANode::prepareICA, &ICANode::performICA, &ICANode::processResults })
+    {
+        Result res = (this->*sub)(info);
+        if (threadShouldExit())
+        {
+            return;
+        }
+        else if (res.failed())
+        {
+            reportError(res.getErrorMessage());
+            return;
+        }
+    }
+
+    while (!threadShouldExit() && !tryToSetNewICAOp(info))
+    {
+        wait(100);
+    }
 }
 
-int ICANode::prepareICA()
+Result ICANode::prepareICA(ICARunInfo& info)
 {
     setStatusMessage("Collecting data for ICA...");
     setProgress(0.0);
 
-    AudioBufferFifo& dataCache = *subProcData[icaRunInfo.subProc].dataCache;
+    AudioBufferFifo& dataCache = *subProcData[info.subProc].dataCache;
 
-    File inputFile = icaRunInfo.dir.getChildFile(inputFilename);
+    File icaDir = info.config.getParentDirectory();
+    File inputFile = icaDir.getChildFile(inputFilename);
 
     int nWritten = 0;
     bool written = false;
@@ -668,7 +506,7 @@ int ICANode::prepareICA()
         // wait for cache to fill up
         while (!dataCache.isFull())
         {
-            if (threadShouldExit()) { return 0; }
+            if (threadShouldExit()) { return Result::ok(); }
 
             setProgress(double(dataCache.getPctFull().getValue()) / 100.0);
 
@@ -677,7 +515,7 @@ int ICANode::prepareICA()
 
         while (!written)
         {
-            if (threadShouldExit()) { return 0; }
+            if (threadShouldExit()) { return Result::ok(); }
 
             // shouldn't be contentious since the cache is supposedly full,
             // but avoid blocking with a try lock just in case
@@ -697,46 +535,52 @@ int ICANode::prepareICA()
             }
 
             // alright, it's really full, we can write it out
-            Result writeRes = hData.writeChannelsToFile(inputFile, icaRunInfo.op->enabledChannels);
+            Result writeRes = hData.writeChannelsToFile(inputFile, info.op->enabledChannels);
             if (writeRes.wasOk())
             {
                 written = true;
-                nWritten = dataCache.getNumSamples();
+                info.nSamples = dataCache.getNumSamples();
             }
             else
             {
-                reportError("Failed to write data to input file ("
+                return Result::fail("Failed to write data to input file ("
                     + writeRes.getErrorMessage().trimEnd() + ")");
-                return 0;
             }
         }
     }
 
     setProgress(1.0);
-    return nWritten;
+    return Result::ok();
 }
 
-bool ICANode::performICA(int nSamples)
+Result ICANode::performICA(ICARunInfo& info)
 {
     setStatusMessage("Running ICA...");
     setProgress(0.0);
 
     // Write config file. For now, not configurable, but maybe can be in the future.
-    File configFile = icaRunInfo.dir.getChildFile(configFilename);
 
     { // scope in which configStream exists
-        FileOutputStream configStream(configFile);
+        FileOutputStream configStream(info.config);
         if (configStream.failedToOpen())
         {
-            reportError("Failed to open binica config file");
-            return false;
+            return Result::fail("Failed to open binica config file");
         }
 
         // skips some settings where the default is ok
         configStream << "# binica config file - for details, see https://sccn.ucsd.edu/wiki/Binica \n";
+
+        // hint for loading - write which channels are enabled
+        configStream << "!chans:";
+        for (int chan : info.op->enabledChannels)
+        {
+            configStream << " " << chan;
+        }
+        configStream << '\n';
+
         configStream << "DataFile " << inputFilename << '\n';
-        configStream << "chans " << icaRunInfo.op->enabledChannels.size() << '\n';
-        configStream << "frames " << nSamples << '\n';
+        configStream << "chans " << info.nChannels << '\n';
+        configStream << "frames " << info.nSamples << '\n';
         configStream << "WeightsOutFile " << weightFilename << '\n';
         configStream << "SphereFile " << sphereFilename << '\n';
         configStream << "maxsteps 512\n";
@@ -747,152 +591,285 @@ bool ICANode::performICA(int nSamples)
         Result status = configStream.getStatus();
         if (status.failed())
         {
-            reportError("Failed to write to config file ("
+            return Result::fail("Failed to write to config file ("
                 + status.getErrorMessage().trimEnd() + ")");
-            return false;
         }
     }
+
+    info.weight = info.config.getParentDirectory().getChildFile(weightFilename);
+    info.sphere = info.config.getParentDirectory().getChildFile(sphereFilename);
     
     // do it!
     double progress = 0.05;
     setProgress(progress);
 
-    ICAProcess proc(configFile);
+    ICAProcess proc(info.config);
 
     int samplesGuess = icaSamples;
     while (proc.isRunning())
     {
-        if (threadShouldExit()) { return false; }
+        if (threadShouldExit()) { return Result::ok(); }
         wait(200);
 
         // stupid guess
-        progress += (icaTargetFs * 60 / samplesGuess * 0.01 * (1 - progress));
+        progress += (icaTargetFs / samplesGuess * (1 - progress));
         setProgress(progress);
     }
 
     if (proc.failedToRun())
     {
-        reportError("ICA failed to start");
-        return false;
+        return Result::fail("ICA failed to start");
     }
 
     int32 exitCode = proc.getExitCode();
     if (exitCode != 0)
     {
-        reportError("ICA failed with exit code " + String(exitCode));
-        return false;
+        return Result::fail("ICA failed with exit code " + String(exitCode));
     }
 
     setProgress(1.0);
+    return Result::ok();
+}
+
+Result ICANode::processResults(ICARunInfo& info)
+{
+    const bool inThread = (Thread::getCurrentThreadId() == getThreadId());
+    if (inThread)
+    {
+        setStatusMessage("Processing ICA results...");
+        setProgress(0.0);
+    }
+
+    if (info.op->unmixing.size() == 0) // skip this if we already have an unmixing matrix
+    {
+        // load weight and sphere matrices into Eigen Map objects
+        int size = info.nChannels;
+        int sizeSq = size * size;
+
+        HeapBlock<float> weightBlock(sizeSq);
+
+        Result res = readMatrix(info.weight, weightBlock, sizeSq);
+        if (res.failed())
+        {
+            return res;
+        }
+
+        if (inThread)
+        {
+            if (threadShouldExit()) { return Result::ok(); }
+            setProgress(0.25);
+        }
+
+        HeapBlock<float> sphereBlock(sizeSq);
+
+        res = readMatrix(info.sphere, sphereBlock, sizeSq);
+        if (res.failed())
+        {
+            return res;
+        }
+
+        if (inThread)
+        {
+            if (threadShouldExit()) { return Result::ok(); }
+            setProgress(0.5);
+        }
+
+        MatrixMap weights(weightBlock.getData(), size, size);
+        MatrixMap sphere(sphereBlock.getData(), size, size);
+
+        // now just need to convert this to mixing and unmixing
+
+        // normalize sphere matrix by largest singular value
+        Eigen::BDCSVD<Matrix> svd(sphere);
+        Matrix normSphere = sphere / svd.singularValues()(0);
+
+        info.op->unmixing = weights * normSphere;
+    }
+
+    info.op->mixing = info.op->unmixing.inverse();
+
+    if (inThread)
+    {
+        if (threadShouldExit()) { return Result::ok(); }
+        setProgress(0.75);
+    }
+
+    // write final matrices to output files
+    File icaDir = info.config.getParentDirectory();
+
+    Result res = saveMatrix(icaDir.getChildFile(unmixingFilename), info.op->unmixing);
+    if (res.failed())
+    {
+        return res;
+    }
+
+    res = saveMatrix(icaDir.getChildFile(mixingFilename), info.op->mixing);
+    if (res.failed())
+    {
+        return res;
+    }
+
+    if (inThread)
+    {
+        setProgress(1.0);
+    }
+    return Result::ok();
+}
+
+
+bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
+{
+    SubProcData& currSubProcData = subProcData[info.subProc];
+    ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
+
+    if (!icaLock.isLocked())
+    {
+        return false;
+    }
+
+    // reject first component by default
+    info.op->keep = false;
+    info.op->components.add(0);
+
+    // see if we can reuse an existing "components" array
+    // this is only allowed if this subprocessor has an existing ICA transformation
+    // and it is based on the same channels.
+    ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
+    if (oldOp->enabledChannels == info.op->enabledChannels)
+    {
+        // take old op's components and keep
+        info.op->components.swapWith(oldOp->components);
+        info.op->keep = oldOp->keep;
+    }
+
+    oldOp.swapWith(info.op);
+    currSubProcData.icaDir.setValue(info.config.getParentDirectory().getFileName());
+    currSubProcData.icaConfigPath = info.config.getFullPathName();
+
     return true;
 }
 
-bool ICANode::processResults()
+Result ICANode::populateInfoFromConfig(ICARunInfo& info)
 {
-    setStatusMessage("Processing ICA results...");
-    setProgress(0.0);
-
-    // load weight and sphere matrices into Eigen Map objects
-    int size = icaRunInfo.op->enabledChannels.size();
-    int sizeSq = size * size;
-
-    HeapBlock<float> weightBlock(sizeSq);
-    File weightFile = icaRunInfo.dir.getChildFile(weightFilename);
-
-    Result res = readOutput(weightFile, weightBlock, sizeSq);
-    if (res.failed())
+    FileInputStream configStream(info.config);
+    if (configStream.failedToOpen())
     {
-        reportError(res.getErrorMessage());
-        return false;
+        return Result::fail("Failed to open config file ("
+            + configStream.getStatus().getErrorMessage().trimEnd() + ")");
     }
 
-    if (threadShouldExit()) { return false; }
-    setProgress(0.2);
-
-    HeapBlock<float> sphereBlock(sizeSq);
-    File sphereFile = icaRunInfo.dir.getChildFile(sphereFilename);
-
-    res = readOutput(sphereFile, sphereBlock, sizeSq);
-    if (res.failed())
+    StringArray configTokens;
+    while (!configStream.isExhausted())
     {
-        reportError(res.getErrorMessage());
-        return false;
-    }
+        String line = configStream.readNextLine();
 
-    if (threadShouldExit()) { return false; }
-    setProgress(0.4);
-
-    Eigen::Map<Eigen::MatrixXf> weights(weightBlock.getData(), size, size);
-    Eigen::Map<Eigen::MatrixXf> sphere(sphereBlock.getData(), size, size);
-
-    // now just need to convert this to mixing and unmixing
-
-    // normalize sphere matrix by largest singular value
-    Eigen::BDCSVD<Eigen::MatrixXf> svd(sphere);
-    Eigen::MatrixXf normSphere = sphere / svd.singularValues()(0);
-
-    icaRunInfo.op->unmixing = weights * normSphere;
-    icaRunInfo.op->mixing = icaRunInfo.op->unmixing.inverse();
-
-    if (threadShouldExit()) { return false; }
-    setProgress(0.6);
-
-    // write final matrices to output files
-    res = saveMatrix(icaRunInfo.dir.getChildFile(unmixingFilename), icaRunInfo.op->unmixing);
-    if (res.failed())
-    {
-        reportError(res.getErrorMessage());
-        return false;
-    }
-
-    res = saveMatrix(icaRunInfo.dir.getChildFile(mixingFilename), icaRunInfo.op->mixing);
-    if (res.failed())
-    {
-        reportError(res.getErrorMessage());
-        return false;
-    }
-
-    SubProcData& currSubProcData = subProcData[icaRunInfo.subProc];
-
-    while (true)
-    {
-        if (threadShouldExit()) { return false; }
-
-        ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
-
-        if (!icaLock.isLocked())
+        Result res = configStream.getStatus();
+        if (res.failed())
         {
-            wait(100);
-            continue;
+            return Result::fail("Failed to read config file ("
+                + res.getErrorMessage().trimEnd() + ")");
         }
 
-        setProgress(0.8);
-
-        // reject first component by default
-        icaRunInfo.op->keep = false;
-        icaRunInfo.op->components.add(0);
-
-        // see if we can reuse an existing "components" array
-        // this is only allowed if this subprocessor has an existing ICA transformation
-        // and it is based on the same channels.
-        ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
-        if (oldOp->enabledChannels == icaRunInfo.op->enabledChannels)
+        // handle enabled channels hint
+        if (line.startsWith("!chans:"))
         {
-            // take old op's components and keep
-            icaRunInfo.op->components.swapWith(oldOp->components);
-            icaRunInfo.op->keep = oldOp->keep;
+            StringArray chanStrs = StringArray::fromTokens(line, false);
+            chanStrs.remove(0);
+            for (const String& chan : chanStrs)
+            {
+                info.op->enabledChannels.add(chan.getIntValue());
+            }
         }
-
-        oldOp.swapWith(icaRunInfo.op);
-        currSubProcData.icaDir.setValue(icaRunInfo.dir.getFileName());
-        currSubProcData.icaParentDir = icaRunInfo.dir.getParentDirectory().getFullPathName();
-
-        setProgress(1.0);
-        return true;
+        else
+        {
+            StringArray tokens = StringArray::fromTokens(line.initialSectionNotContaining("!#%"), true);
+            configTokens.addArray(tokens);
+        }
     }
+
+    int nTokens = configTokens.size();
+    if (nTokens % 2 == 1)
+    {
+        return Result::fail("Malformed config file");
+    }
+
+    // fields of interest: chans, WeightsOutFile, SphereFile
+    // all are required.
+    File configDir = info.config.getParentDirectory();
+
+    for (const String* tok = configTokens.begin(); tok < configTokens.end() - 1; tok += 2)
+    {
+        if (tok->equalsIgnoreCase("chans") || tok->equalsIgnoreCase("chan"))
+        {
+            info.nChannels = tok[1].getIntValue();
+        }
+        else if (tok->equalsIgnoreCase("weightsoutfile"))
+        {
+            info.weight = configDir.getChildFile(tok[1]);
+        }
+        else if (tok->equalsIgnoreCase("spherefile"))
+        {
+            info.sphere = configDir.getChildFile(tok[1]);
+        }
+    }
+
+    if (info.nChannels < 2) { return Result::fail("Invalid or missing # of channels"); }
+
+    if (info.op->enabledChannels.isEmpty())
+    {
+        CoreServices::sendStatusMessage("Warning: no enabled channels hint found, assuming "
+            "first " + String(info.nChannels) + " channels");
+        
+        for (int i = 0; i < info.nChannels; ++i)
+        {
+            info.op->enabledChannels.add(i);
+        }
+    }
+    else if (info.op->enabledChannels.size() != info.nChannels)
+    {
+        return Result::fail("Inconsistent number of channels");
+    }
+
+    if (subProcData[currSubProc].channelInds.size() <= info.op->enabledChannels.getLast())
+    {
+        return Result::fail("Not enough channels in current subproc for selected ICA operation");
+    }
+
+    // see whether we can use existing mixing and unmixing files
+    File mixingFile   = configDir.getChildFile(mixingFilename);
+    File unmixingFile = configDir.getChildFile(unmixingFilename);
+
+    int numel = info.nChannels * info.nChannels;
+    HeapBlock<float> matStore(numel);
+    if (readMatrix(unmixingFile, matStore, numel).wasOk())
+    {
+        info.op->unmixing = MatrixMap(matStore, info.nChannels, info.nChannels);
+
+        if (readMatrix(mixingFile, matStore, numel).wasOk())
+        {
+            info.op->mixing = MatrixMap(matStore, info.nChannels, info.nChannels);
+        }
+    }
+    else
+    {
+        if (!info.weight.existsAsFile()) { return Result::fail("Invalid or missing weight file"); }
+        if (!info.sphere.existsAsFile()) { return Result::fail("Invalid or missing sphere file"); }
+    }
+
+    if (info.op->mixing.size() == 0)
+    {
+        Result res = processResults(info);
+        if (res.failed())
+        {
+            return res;
+        }
+    }
+
+    jassert(info.op->mixing.size() == numel);
+    return Result::ok();
 }
 
-Result ICANode::readOutput(const File& source, HeapBlock<float>& dest, int numel)
+Result ICANode::readMatrix(const File& source, HeapBlock<float>& dest, int numel)
 {
     String fn = source.getFileName();
 
@@ -904,7 +881,8 @@ Result ICANode::readOutput(const File& source, HeapBlock<float>& dest, int numel
     FileInputStream stream(source);
     if (stream.failedToOpen())
     {
-        return Result::fail("Failed to open " + fn);
+        return Result::fail("Failed to open " + fn
+            + " (" + stream.getStatus().getErrorMessage().trimEnd() + ")");
     }
 
     if (stream.getTotalLength() != numel * sizeof(float))
@@ -923,7 +901,7 @@ Result ICANode::readOutput(const File& source, HeapBlock<float>& dest, int numel
     return Result::ok();
 }
 
-Result ICANode::saveMatrix(const File& dest, const Eigen::Ref<const Eigen::MatrixXf>& mat)
+Result ICANode::saveMatrix(const File& dest, const MatrixRef& mat)
 {
     String fn = dest.getFileName();
 
@@ -950,6 +928,208 @@ void ICANode::reportError(const String& whatHappened)
     setStatusMessage("Error: " + whatHappened);
     CoreServices::sendStatusMessage("ICA failed: " + whatHappened);
     wait(5000);
+}
+
+/****  AudioBufferFifo ****/
+
+AudioBufferFifo::AudioBufferFifo(int numChans, int numSamps)
+    : data(new AudioSampleBuffer(numChans, numSamps))
+    , full(false)
+{
+    reset();
+}
+
+int AudioBufferFifo::getNumSamples() const
+{
+    return data->getNumSamples();
+}
+
+const Value& AudioBufferFifo::getPctFull() const
+{
+    return pctFull;
+}
+
+bool AudioBufferFifo::isFull() const
+{
+    return full.load(std::memory_order_acquire);
+}
+
+void AudioBufferFifo::updateFullStatus()
+{
+    int numSamps = data->getNumSamples();
+    full.store(numWritten == numSamps, std::memory_order_release);
+    int pctFullInt = numSamps == 0 ? 100 : int(100.0 * numWritten / numSamps + 0.5);
+    pctFull = String(pctFullInt) + "% full)";
+}
+
+void AudioBufferFifo::reset()
+{
+    startPoint = 0;
+    numWritten = 0;
+    pctFull = "0% full)";
+    full = false;
+}
+
+
+/**  AudioBufferFifo handles **/
+
+AudioBufferFifo::Handle::Handle(AudioBufferFifo& fifoIn)
+    : fifo(fifoIn)
+{}
+
+void AudioBufferFifo::Handle::reset()
+{
+    if (!isValid()) { return; }
+
+    fifo.reset();
+}
+
+void AudioBufferFifo::Handle::resetWithSize(int numChans, int numSamps)
+{
+    if (!isValid()) { return; }
+
+    jassert(numChans >= 0 && numSamps >= 0);
+    fifo.data->setSize(numChans, numSamps);
+    fifo.reset();
+}
+
+
+void AudioBufferFifo::Handle::copySample(const AudioSampleBuffer& source,
+    const Array<int>& channels, int sample)
+{
+    if (!isValid()) { return; }
+
+    int numSamps = fifo.data->getNumSamples();
+    if (numSamps < 1) { return; }
+
+    int numChans = fifo.data->getNumChannels();
+    jassert(channels.size() == numChans);
+
+    int destSample = (fifo.startPoint + fifo.numWritten) % numSamps;
+
+    for (int c = 0; c < numChans; ++c)
+    {
+        int sourceChan = channels[c];
+        jassert(sourceChan >= 0 && sourceChan < source.getNumChannels());
+        fifo.data->setSample(c, destSample, source.getSample(sourceChan, sample));
+    }
+
+    if (fifo.numWritten < numSamps)
+    {
+        fifo.numWritten++;
+    }
+    else
+    {
+        jassert(destSample == fifo.startPoint);
+        fifo.startPoint = (fifo.startPoint + 1) % numSamps;
+    }
+
+    fifo.updateFullStatus();
+}
+
+
+void AudioBufferFifo::Handle::resizeKeepingData(int numSamps)
+{
+    if (!isValid()) { return; }
+
+    int numChans = fifo.data->getNumChannels();
+    int currNumSamps = fifo.data->getNumSamples();
+
+    if (currNumSamps == numSamps) { return; }
+
+    if (fifo.startPoint + fifo.numWritten <= numSamps)
+    {
+        // all in one block that will fit in new size - no special handling required
+        fifo.data->setSize(numChans, numSamps, true);
+    }
+    else
+    {
+        ScopedPointer<AudioSampleBuffer> tempData(new AudioSampleBuffer(numChans, numSamps));
+
+        int newNumWritten = jmin(fifo.numWritten, numSamps);
+
+        // could use an AbstractFifo maybe but w/e
+        int block1Start = fifo.startPoint;
+        int block1Size = jmin(newNumWritten, currNumSamps - block1Start);
+
+        int block2Start = 0;
+        int block2Size = newNumWritten - block1Size;
+
+        for (int c = 0; c < numChans; ++c)
+        {
+            tempData->copyFrom(c, 0, *fifo.data, c, block1Start, block1Size);
+            tempData->copyFrom(c, block1Size, *fifo.data, c, block2Start, block2Size);
+        }
+
+        fifo.data.swapWith(tempData);
+        fifo.startPoint = 0;
+        fifo.numWritten = newNumWritten;
+    }
+
+    fifo.updateFullStatus();
+}
+
+
+Result AudioBufferFifo::Handle::writeChannelsToFile(const File& file, const Array<int>& channels)
+{
+    if (!isValid())
+    {
+        jassertfalse;
+        return Result::fail("Invalid handle to data cache");
+    }
+
+    FileOutputStream stream(file);
+    if (!stream.openedOk())
+    {
+        return stream.getStatus();
+    }
+
+    jassert(fifo.full.load(std::memory_order_acquire)); // should only be called when the FIFO is full...
+
+    int numChans = fifo.data->getNumChannels();
+    int numSamps = fifo.data->getNumSamples();
+
+    for (int chan : channels)
+    {
+        jassert(chan >= 0 && chan < numChans);
+    }
+
+    for (int s = 0; s < numSamps; ++s)
+    {
+        int samp = (fifo.startPoint + s) % numSamps;
+
+        for (int chan : channels)
+        {
+            if (!stream.writeFloat(fifo.data->getSample(chan, samp)))
+            {
+                return stream.getStatus();
+            }
+        }
+    }
+
+    stream.flush();
+    return stream.getStatus();
+}
+
+bool AudioBufferFifo::Handle::isValid() const
+{
+    return true;
+}
+
+
+AudioBufferFifo::LockHandle::LockHandle(AudioBufferFifo& fifoIn)
+    : Handle({ fifoIn })
+    , ScopedLock(fifoIn.mutex)
+{}
+
+AudioBufferFifo::TryLockHandle::TryLockHandle(AudioBufferFifo& fifoIn)
+    : Handle({ fifoIn })
+    , ScopedTryLock(fifoIn.mutex)
+{}
+
+bool AudioBufferFifo::TryLockHandle::isValid() const
+{
+    return isLocked();
 }
 
 

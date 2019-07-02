@@ -66,9 +66,7 @@ if(MSVC)
 	
 	set(GUI_BIN_DIR ${GUI_BIN_DIR}/$<IF:$<CONFIG:Debug>,Debug,Release>/bin)
 
-	target_link_libraries(${PLUGIN_NAME}
-		${GUI_BIN_DIR}/open-ephys.lib
-		${GUI_BIN_DIR}/lib/RWSync.lib)
+	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
 	
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl-)
 
@@ -78,8 +76,7 @@ if(MSVC)
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)
 
-	target_link_libraries(${PLUGIN_NAME} GL X11 Xext Xinerama asound dl freetype pthread rt
-		${GUI_BIN_DIR}/shared/RWSync.so)
+	target_link_libraries(${PLUGIN_NAME} GL X11 Xext Xinerama asound dl freetype pthread rt)
 	
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
 		"-fvisibility=hidden -fPIC -rdynamic -Wl,-rpath,'$ORIGIN/../shared'")
@@ -92,8 +89,6 @@ elseif(LINUX)
 elseif(APPLE)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/MacOSX/build/)
 	
-	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/shared/RWSync.dylib)
-	
 	set_target_properties(${PLUGIN_NAME} PROPERTIES BUNDLE TRUE)
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
 	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared")
@@ -103,10 +98,6 @@ elseif(APPLE)
 	
 	set(CMAKE_PREFIX_PATH /opt/local)
 endif()
-
-#include common lib header files
-
-target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BIN_DIR}/include)
 
 #create filters for vs and xcode
 

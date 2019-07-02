@@ -21,6 +21,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace ICA;
 
+const String ICAEditor::subProcTooltip("An ICA operation can be computed and stored"
+    " for each input subprocessor. The input selected here is the one that a newly"
+    " calculated or loaded operation will be applied to, and also the one that is"
+    " displayed in the visualizer tab. You can select which channels the ICA operation"
+    " should apply to (down to a minimum of 2) in the 'PARAMS' tab in the drawer.");
+
+const String ICAEditor::durationTooltip("At least 30 seconds of training is"
+    " recommended for best results. After the buffer fills with training data,"
+    " it will continue to stay updated with new samples while discarding old samples.");
+
+const String ICAEditor::dirSuffixTooltip("Output of the ICA run will be saved"
+    " to a directory 'ICA_<timestamp>_<suffix>' within either the Open Ephys"
+    " executable folder or, if a recording is active, the recording folder.");
+
 ICAEditor::ICAEditor(ICANode* parentNode)
     : VisualizerEditor  (parentNode, 220, false)
     , subProcLabel      ("subProcLabel", "Input:")
@@ -29,7 +43,7 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     , durationTextBox   ("durationTextBox", String(parentNode->getTrainDurationSec()))
     , collectedLabel    ("collectedLabel", "s   (")
     , collectedIndicator("collectedIndicator", "")
-    , dirSuffixLabel    ("dirSuffixLabel", "Output dir suffix:")
+    , dirSuffixLabel    ("dirSuffixLabel", "Suffix:")
     , dirSuffixTextBox  ("dirSuffixTextBox", parentNode->getDirSuffix())
     , startButton       ("START", Font("Default", 12, Font::plain))
     , currICAIndicator  ("currICAIndicator", "")
@@ -39,13 +53,16 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     canvas = new ICACanvas(parentNode);
 
     subProcLabel.setBounds(10, 30, 50, 20);
+    subProcLabel.setTooltip(subProcTooltip);
     addAndMakeVisible(subProcLabel);
 
     subProcComboBox.setBounds(60, 30, 130, 22);
     subProcComboBox.addListener(this);
+    subProcComboBox.setTooltip(subProcTooltip);
     addAndMakeVisible(subProcComboBox);
 
     durationLabel.setBounds(10, 55, 60, 20);
+    durationLabel.setTooltip(durationTooltip);
     addAndMakeVisible(durationLabel);
 
     durationTextBox.setBounds(70, 55, 40, 20);
@@ -53,30 +70,36 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     durationTextBox.addListener(this);
     durationTextBox.setColour(Label::backgroundColourId, Colours::grey);
     durationTextBox.setColour(Label::textColourId, Colours::white);
+    durationTextBox.setTooltip(durationTooltip);
     addAndMakeVisible(durationTextBox);
 
     collectedLabel.setBounds(110, 55, 30, 20);
+    collectedLabel.setTooltip(durationTooltip);
     addAndMakeVisible(collectedLabel);
 
     collectedIndicator.setBounds(130, 55, 80, 20);
     collectedIndicator.getTextValue().referTo(parentNode->getPctFullValue());
+    collectedIndicator.setTooltip(durationTooltip);
     addAndMakeVisible(collectedIndicator);
 
-    dirSuffixLabel.setBounds(10, 80, 110, 20);
+    dirSuffixLabel.setBounds(10, 80, 50, 20);
+    dirSuffixLabel.setTooltip(dirSuffixTooltip);
     addAndMakeVisible(dirSuffixLabel);
 
-    dirSuffixTextBox.setBounds(125, 80, 50, 20);
+    dirSuffixTextBox.setBounds(65, 80, 50, 20);
     dirSuffixTextBox.setEditable(true);
     dirSuffixTextBox.addListener(this);
     dirSuffixTextBox.setColour(Label::backgroundColourId, Colours::grey);
     dirSuffixTextBox.setColour(Label::textColourId, Colours::white);
+    dirSuffixTextBox.setTooltip(dirSuffixTooltip);
     addAndMakeVisible(dirSuffixTextBox);
 
-    startButton.setBounds(10, 105, 50, 20);
-    startButton.addListener(this);    
+    startButton.setBounds(130, 80, 50, 20);
+    startButton.addListener(this);
+    startButton.setEnabled(CoreServices::getAcquisitionStatus());
     addAndMakeVisible(startButton);
     
-    currICAIndicator.setBounds(65, 105, 120, 20);
+    currICAIndicator.setBounds(10, 105, 175, 20);
     currICAIndicator.getTextValue().referTo(parentNode->getICAOutputDirValue());
     currICAIndicator.getTextValue().addListener(this);
     addAndMakeVisible(currICAIndicator);
@@ -161,7 +184,14 @@ void ICAEditor::buttonEvent(Button* button)
     }
     else if (button == &loadButton)
     {
+        File icaBaseDir = ICANode::getICABaseDir();
+        FileChooser fc("Choose a binica config file...", icaBaseDir, "*.sc;*", true);
 
+        if (fc.browseForFileToOpen())
+        {
+            File configFile = fc.getResult();
+            icaNode->loadICA(configFile);
+        }
     }
 }
 
@@ -194,4 +224,15 @@ void ICAEditor::updateSettings()
 
     collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
     currICAIndicator.getTextValue().referTo(icaNode->getICAOutputDirValue());
+}
+
+
+void ICAEditor::startAcquisition()
+{
+    startButton.setEnabled(true);
+}
+
+void ICAEditor::stopAcquisition()
+{
+    startButton.setEnabled(false);
 }
