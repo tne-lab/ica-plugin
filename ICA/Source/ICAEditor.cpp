@@ -27,7 +27,7 @@ const String ICAEditor::subProcTooltip("An ICA operation can be computed and sto
     " displayed in the visualizer tab. You can select which channels the ICA operation"
     " should apply to (down to a minimum of 2) in the 'PARAMS' tab in the drawer.");
 
-const String ICAEditor::durationTooltip("At least 30 seconds of training is"
+const String ICAEditor::durationTooltip("At least 2 minutes of training is"
     " recommended for best results. After the buffer fills with training data,"
     " it will continue to stay updated with new samples while discarding old samples.");
 

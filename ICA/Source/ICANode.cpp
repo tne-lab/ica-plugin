@@ -39,7 +39,7 @@ const String ICANode::unmixingFilename("unmixing.dat");
 ICANode::ICANode()
     : GenericProcessor          ("ICA")
     , ThreadWithProgressWindow  ("ICA Computation", true, true)
-    , icaSamples                (int(icaTargetFs * 30))
+    , icaSamples                (int(icaTargetFs * 120))
     , componentBuffer           (1024)
     , currSubProc               (0)
 {
@@ -556,7 +556,6 @@ Result ICANode::prepareICA(ICARunInfo& info)
 Result ICANode::performICA(ICARunInfo& info)
 {
     setStatusMessage("Running ICA...");
-    setProgress(0.0);
 
     // Write config file. For now, not configurable, but maybe can be in the future.
 
@@ -600,20 +599,12 @@ Result ICANode::performICA(ICARunInfo& info)
     info.sphere = info.config.getParentDirectory().getChildFile(sphereFilename);
     
     // do it!
-    double progress = 0.05;
-    setProgress(progress);
-
     ICAProcess proc(info.config);
 
-    int samplesGuess = icaSamples;
     while (proc.isRunning())
     {
         if (threadShouldExit()) { return Result::ok(); }
         wait(200);
-
-        // stupid guess
-        progress += (icaTargetFs / samplesGuess * (1 - progress));
-        setProgress(progress);
     }
 
     if (proc.failedToRun())
@@ -627,7 +618,6 @@ Result ICANode::performICA(ICARunInfo& info)
         return Result::fail("ICA failed with exit code " + String(exitCode));
     }
 
-    setProgress(1.0);
     return Result::ok();
 }
 
@@ -637,7 +627,6 @@ Result ICANode::processResults(ICARunInfo& info)
     if (inThread)
     {
         setStatusMessage("Processing ICA results...");
-        setProgress(0.0);
     }
 
     if (info.op->unmixing.size() == 0) // skip this if we already have an unmixing matrix
@@ -654,11 +643,7 @@ Result ICANode::processResults(ICARunInfo& info)
             return res;
         }
 
-        if (inThread)
-        {
-            if (threadShouldExit()) { return Result::ok(); }
-            setProgress(0.25);
-        }
+        if (inThread && threadShouldExit()) { return Result::ok(); }
 
         HeapBlock<float> sphereBlock(sizeSq);
 
@@ -668,11 +653,7 @@ Result ICANode::processResults(ICARunInfo& info)
             return res;
         }
 
-        if (inThread)
-        {
-            if (threadShouldExit()) { return Result::ok(); }
-            setProgress(0.5);
-        }
+        if (inThread && threadShouldExit()) { return Result::ok(); }
 
         MatrixMap weights(weightBlock.getData(), size, size);
         MatrixMap sphere(sphereBlock.getData(), size, size);
@@ -688,11 +669,7 @@ Result ICANode::processResults(ICARunInfo& info)
 
     info.op->mixing = info.op->unmixing.inverse();
 
-    if (inThread)
-    {
-        if (threadShouldExit()) { return Result::ok(); }
-        setProgress(0.75);
-    }
+    if (inThread && threadShouldExit()) { return Result::ok(); }
 
     // write final matrices to output files
     File icaDir = info.config.getParentDirectory();
@@ -709,10 +686,6 @@ Result ICANode::processResults(ICARunInfo& info)
         return res;
     }
 
-    if (inThread)
-    {
-        setProgress(1.0);
-    }
     return Result::ok();
 }
 
