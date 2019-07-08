@@ -185,7 +185,7 @@ void ICAEditor::buttonEvent(Button* button)
     else if (button == &loadButton)
     {
         File icaBaseDir = ICANode::getICABaseDir();
-        FileChooser fc("Choose a binica config file...", icaBaseDir, "*.sc;*", true);
+        FileChooser fc("Choose a binica config file...", icaBaseDir, "*.sc", true);
 
         if (fc.browseForFileToOpen())
         {
