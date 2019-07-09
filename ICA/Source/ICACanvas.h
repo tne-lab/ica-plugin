@@ -24,10 +24,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace ICA
 {
-    class ICACanvas : public Visualizer
+    class ICANode;
+
+    class ICACanvas : public Visualizer, public Value::Listener
     {
     public:
-        ICACanvas(GenericProcessor* proc);
+        ICACanvas(ICANode* proc);
+
+        void valueChanged(Value& value) override;
 
         void refreshState() override;
         void update() override;
@@ -38,9 +42,46 @@ namespace ICA
         void setParameter(int, int, int, float) override;
             
     private:
-        GenericProcessor* const node;
 
-        String displayedICADir;
+        //enum MatrixType { mixing, unmixing };
+
+        //class MatrixEntry : public Button
+        //{
+        //public:
+        //    MatrixEntry(int row, int col);
+
+        //    void paint(Graphics& g) override;
+
+        //private:
+        //    const int row;
+        //    const int col;
+        //    float value;
+
+        //    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MatrixEntry);
+        //};
+
+        //class MatrixView : public Component, public Button::Listener
+        //{
+        //public:
+        //    MatrixView(const ICACanvas& canvas, const MatrixType type);
+
+        //    void paint(Graphics& g) override;
+
+        //    void buttonClicked(Button* button) override;
+
+        //private:
+
+        //    OwnedArray<OwnedArray<MatrixEntry>> entries;
+
+        //    const ICACanvas& canvas;
+        //    const MatrixType type;
+
+        //    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MatrixView);
+        //};
+
+        ICANode* const node;
+
+        const Value& configPathVal;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICACanvas);
     };

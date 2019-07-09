@@ -112,6 +112,8 @@ namespace ICA
 
         LoadButton loadButton;
 
+        const Value& configPathVal;
+
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };
 }

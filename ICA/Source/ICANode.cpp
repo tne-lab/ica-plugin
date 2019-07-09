@@ -79,8 +79,7 @@ void ICANode::resetICA(uint32 subproc)
         }
 
         data.icaOp = new ICAOperation();
-        data.icaDir.setValue("");
-        data.icaConfigPath.clear();
+        data.icaConfigPath = "";
     }
 }
 
@@ -253,7 +252,7 @@ void ICANode::updateSettings()
             newData.dsOffset = 0;
             newData.channelInds.add(c);
             newData.icaOp = new ICAOperation(); // null operation by default
-            newData.icaDir = String();
+            newData.icaConfigPath = "";
 
             // see whether there's a data entry in the old map to use
             auto oldDataEntry = subProcData.find(sourceFullId);
@@ -267,8 +266,7 @@ void ICANode::updateSettings()
                 // the ICA op really shouldn't be being used now, but just in case...
                 const ScopedWriteLock icaWriteLock(oldData.icaMutex);
                 newData.icaOp.swapWith(oldData.icaOp);
-                newData.icaDir.referTo(oldData.icaDir);
-                newData.icaConfigPath.swapWith(oldData.icaConfigPath);
+                newData.icaConfigPath.referTo(oldData.icaConfigPath);
             }
             else
             {
@@ -294,13 +292,15 @@ void ICANode::updateSettings()
         {
             // can't use, needs too many channels - reset to no-op
             data.icaOp = new ICAOperation();
-            data.icaDir = String();
-            data.icaConfigPath.clear();
+            data.icaConfigPath = "";
         }
     }
 
     subProcData.swap(newSubProcData);
+    
     currSubProc = newSubProc;
+    SubProcData& data = subProcData[currSubProc];
+    currICAConfigPath.referTo(data.icaConfigPath);
 }
 
 
@@ -363,7 +363,22 @@ uint32 ICANode::getCurrSubProc() const
 
 void ICANode::setCurrSubProc(uint32 fullId)
 {
-    currSubProc = fullId;
+    if (fullId == 0)
+    {
+        currSubProc = fullId;
+        currICAConfigPath.referTo(emptyVal);
+    }
+    else
+    {
+        auto& newSubProcData = subProcData.find(fullId);
+        if (newSubProcData == subProcData.end())
+        {
+            jassertfalse;
+            return;
+        }
+        currSubProc = fullId;
+        currICAConfigPath.referTo(newSubProcData->second.icaConfigPath);
+    }
 }
 
 
@@ -378,14 +393,13 @@ const Value& ICANode::getPctFullValue() const
 }
 
 
-const Value& ICANode::getICAOutputDirValue() const
+const Value& ICANode::addConfigPathListener(Value::Listener* listener)
 {
-    if (currSubProc == 0)
+    if (listener)
     {
-        return emptyVal;
+        currICAConfigPath.addListener(listener);
     }
-
-    return subProcData.at(currSubProc).icaDir;
+    return currICAConfigPath;
 }
 
 
@@ -716,7 +730,6 @@ bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
     }
 
     oldOp.swapWith(info.op);
-    currSubProcData.icaDir.setValue(info.config.getParentDirectory().getFileName());
     currSubProcData.icaConfigPath = info.config.getFullPathName();
 
     return true;

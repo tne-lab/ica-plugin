@@ -16,13 +16,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "ICACanvas.h"
+#include "ICANode.h"
 
 using namespace ICA;
 
-ICACanvas::ICACanvas(GenericProcessor* proc)
-    : node(proc)
-{
+ICACanvas::ICACanvas(ICANode* proc)
+    : node          (proc)
+    , configPathVal (proc->addConfigPathListener(this))
+{}
 
+void ICACanvas::valueChanged(Value& value)
+{
+    if (value.refersToSameSourceAs(configPathVal))
+    {
+        // get new matrices and update MatrixViews
+    }    
 }
 
 void ICACanvas::refreshState() {}

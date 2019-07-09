@@ -165,17 +165,13 @@ namespace ICA
         uint32 getCurrSubProc() const;
         void setCurrSubProc(uint32 fullId);
 
-        // for editor indicators
+        // for editor indicator
         const Value& getPctFullValue() const;
-        const Value& getICAOutputDirValue() const;
 
-        ScopedPointer<ScopedReadLock> getICAOperation() const;
+        // also returns a reference to the value, so it can be identified in the callback.
+        const Value& addConfigPathListener(Value::Listener* listener);
 
-        static File getICABaseDir();
 
-    private:
-
-        // for calculating the selection matrix
         struct ICAOperation
         {
             Matrix mixing;
@@ -190,6 +186,12 @@ namespace ICA
             }
         };
 
+        const ICAOperation* getICAOperation(ScopedPointer<ScopedReadLock>& lock) const;
+
+        static File getICABaseDir();
+
+    private:
+
         struct SubProcData
         {
             float Fs;
@@ -201,10 +203,9 @@ namespace ICA
             // for colllecting data for ICA during acquisition
             ScopedPointer<AudioBufferFifo> dataCache;
 
+            ReadWriteLock icaMutex; // controls below variables
             ScopedPointer<ICAOperation> icaOp;
-            Value icaDir; // separate from icaOp so its value can be referred to across updates to icaOp
-            String icaConfigPath;
-            ReadWriteLock icaMutex; // controls icaOp, icaDir, and icaParentDir
+            Value icaConfigPath;    // full path of current ICA transformatiion config file, if any
         };
 
         // for temporary storage while calculating ICA operation
@@ -253,7 +254,10 @@ namespace ICA
         // ordered so that combobox is consistent/goes in lexicographic order of subproc
         std::map<uint32, SubProcInfo> subProcInfo;
         std::map<uint32, SubProcData> subProcData;
-        uint32 currSubProc; // full source ID
+
+        // relevant to state of editor and canvas
+        uint32 currSubProc;      // full source ID of selected subproc
+        Value currICAConfigPath; // full path to .sc file
 
         // temporary storage for ICA components
         HeapBlock<float> componentBuffer;

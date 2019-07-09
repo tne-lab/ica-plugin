@@ -48,6 +48,7 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     , startButton       ("START", Font("Default", 12, Font::plain))
     , currICAIndicator  ("currICAIndicator", "")
     , clearButton       ("X", Font("Default", 12, Font::plain))
+    , configPathVal     (parentNode->addConfigPathListener(this))
 {
     // we always want to have a canvas available, makes things a lot simpler
     canvas = new ICACanvas(parentNode);
@@ -100,8 +101,6 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     addAndMakeVisible(startButton);
     
     currICAIndicator.setBounds(10, 105, 175, 20);
-    currICAIndicator.getTextValue().referTo(parentNode->getICAOutputDirValue());
-    currICAIndicator.getTextValue().addListener(this);
     addAndMakeVisible(currICAIndicator);
 
     clearButton.setBounds(185, 105, 20, 20);
@@ -165,7 +164,6 @@ void ICAEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
 
         // update indicators
         collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
-        currICAIndicator.getTextValue().referTo(icaNode->getICAOutputDirValue());
     }
 }
 
@@ -198,8 +196,11 @@ void ICAEditor::buttonEvent(Button* button)
 
 void ICAEditor::valueChanged(Value& value)
 {
-    if (value.refersToSameSourceAs(currICAIndicator.getTextValue()))
+    if (value.refersToSameSourceAs(configPathVal))
     {
+        String icaDir = File(value.toString()).getParentDirectory().getFileName();
+        currICAIndicator.setText(icaDir, dontSendNotification);
+
         // "X" should be visible iff there is an ICA operation loaded for the current subproc
         clearButton.setVisible(!value.toString().isEmpty());
     }
@@ -223,7 +224,6 @@ void ICAEditor::updateSettings()
     subProcComboBox.setSelectedId(currSubProc, dontSendNotification);
 
     collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
-    currICAIndicator.getTextValue().referTo(icaNode->getICAOutputDirValue());
 }
 
 
