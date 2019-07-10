@@ -101,6 +101,38 @@ namespace ICA
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBufferFifo);
     };
 
+    struct SubProcInfo
+    {
+        uint16 sourceID;
+        uint16 subProcIdx;
+        String sourceName;
+        StringArray channelNames;
+
+        // source ID and subproc index uniquely identify the subprocessor
+        bool operator==(const SubProcInfo& other) const;
+
+        // display name for the ComboBox
+        operator String() const;
+
+        JUCE_LEAK_DETECTOR(SubProcInfo);
+    };
+
+    struct ICAOperation
+    {
+        Matrix mixing;
+        Matrix unmixing;
+        Array<int> enabledChannels; // of this subprocessor's channels, which to include in ica
+        Array<int> components;      // which components to keep or reject
+        bool keep = false;          // true == keep selected components, false == reject
+
+        inline bool isNoop() const
+        {
+            return enabledChannels.isEmpty();
+        }
+
+        JUCE_LEAK_DETECTOR(ICAOperation);
+    };
+
     class ICANode : public GenericProcessor, public ThreadWithProgressWindow
     {
     public:
@@ -108,9 +140,6 @@ namespace ICA
 
         bool hasEditor() const { return true; }
         AudioProcessorEditor* createEditor() override;
-
-        /** Optional method that informs the GUI if the processor is ready to function. If false acquisition cannot start. Defaults to true */
-        //bool isReady();
 
         // returns false on error, including if ICA is already running
         bool startICA();
@@ -120,6 +149,7 @@ namespace ICA
 
         void loadICA(const File& configFile);
 
+        // not used currently:
         //bool enable() override;
 
         bool disable() override;
@@ -148,19 +178,6 @@ namespace ICA
         String getDirSuffix() const;
         void setDirSuffix(const String& suffix);
 
-        struct SubProcInfo
-        {
-            uint16 sourceID;
-            uint16 subProcIdx;
-            String sourceName;
-
-            // source ID and subproc index uniquely identify the subprocessor
-            bool operator==(const SubProcInfo& other) const;
-
-            // display name for the ComboBox
-            operator String() const;
-        };
-
         const std::map<uint32, SubProcInfo>& getSubProcInfo() const;
         uint32 getCurrSubProc() const;
         void setCurrSubProc(uint32 fullId);
@@ -171,21 +188,8 @@ namespace ICA
         // also returns a reference to the value, so it can be identified in the callback.
         const Value& addConfigPathListener(Value::Listener* listener);
 
-
-        struct ICAOperation
-        {
-            Matrix mixing;
-            Matrix unmixing;
-            Array<int> enabledChannels; // of this subprocessor's channels, which to include in ica
-            Array<int> components;      // which components to keep or reject
-            bool keep = false;          // true == keep selected components, false == reject
-
-            inline bool isNoop() const
-            {
-                return enabledChannels.isEmpty();
-            }
-        };
-
+        // returns null if there is no input or no real operation (i.e. operation is a no-op)
+        // otherwise, returns the current operation and makes a lock in the passed-in pointer for its mutex.
         const ICAOperation* getICAOperation(ScopedPointer<ScopedReadLock>& lock) const;
 
         static File getICABaseDir();

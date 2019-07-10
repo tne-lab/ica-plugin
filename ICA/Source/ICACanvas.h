@@ -21,15 +21,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif // ICA_CANVAS_H_DEFINED
 
 #include <VisualizerWindowHeaders.h>
+#include <EditorHeaders.h> // for electrode button
+
+#include "ICANode.h"
 
 namespace ICA
 {
-    class ICANode;
-
     class ICACanvas : public Visualizer, public Value::Listener
     {
     public:
-        ICACanvas(ICANode* proc);
+        ICACanvas(ICANode& proc);
+
+        void resized() override;
+        void paint(Graphics& g) override;
 
         void valueChanged(Value& value) override;
 
@@ -43,45 +47,115 @@ namespace ICA
             
     private:
 
-        //enum MatrixType { mixing, unmixing };
+        class ColourBar : public Component
+        {
+        public:
+            explicit ColourBar(float max = 0.0f);
 
-        //class MatrixEntry : public Button
-        //{
-        //public:
-        //    MatrixEntry(int row, int col);
+            // maximum positive and minimum negative value
+            void resetRange(float max = 0.0f);
 
-        //    void paint(Graphics& g) override;
+            // sets absMax to abs(val) if it is currently smalller.
+            void ensureValueInRange(float val);
 
-        //private:
-        //    const int row;
-        //    const int col;
-        //    float value;
+            float getAbsoluteMax() const;
 
-        //    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MatrixEntry);
-        //};
+            void paint(Graphics& g) override;
 
-        //class MatrixView : public Component, public Button::Listener
-        //{
-        //public:
-        //    MatrixView(const ICACanvas& canvas, const MatrixType type);
+        private:
+            float absMax;
 
-        //    void paint(Graphics& g) override;
+            JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ColourBar);
+        };
 
-        //    void buttonClicked(Button* button) override;
+        class MatrixView : public Component
+        {
+        public:
+            MatrixView(ColourBar& bar);
 
-        //private:
+            // changes the underlying data and automatically repaints.
+            void setData(const Matrix& newData);
 
-        //    OwnedArray<OwnedArray<MatrixEntry>> entries;
+            void paint(Graphics& g) override;
 
-        //    const ICACanvas& canvas;
-        //    const MatrixType type;
+        private:
+            ColourBar& colourBar;
 
-        //    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MatrixView);
-        //};
+            Matrix data;
+            //const MatrixType type;
 
-        ICANode* const node;
+            JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MatrixView);
+        };
+
+        ICANode& node;
 
         const Value& configPathVal;
+
+        Viewport viewport;
+
+        // hierarchical singleton struct of displayed components
+        // it seemed messy to have all the nested components as top-level members of ICACanvas
+        // hopefully this isn't even more confusing...
+        struct ContentCanvas : public Component
+        {
+            ContentCanvas();
+
+            void update(const ICAOperation& op);
+
+            struct MixingInfo : public Component
+            {
+                MixingInfo();
+
+                void update(int startX, const Matrix& mixing);
+
+                ColourBar colourBar;
+                Label title;
+                OwnedArray<Label> chanLabels;
+                MatrixView matrixView;
+                MatrixView normView;
+                Label normLabel;
+
+            } mixingInfo;
+
+            Label multiplySign1;
+
+            struct ComponentSelectionArea : public Component
+            {
+                ComponentSelectionArea();
+
+                void update(int startX, const ICAOperation& op);
+
+                Label title;
+                DrawableRectangle selectionGrid;
+                OwnedArray<ElectrodeButton> componentButtons;
+
+            } componentSelectionArea;
+
+            Label multiplySign2;
+
+            struct UnmixingInfo : public Component
+            {
+                UnmixingInfo();
+
+                void update(int startX, const Matrix& unmixing);
+
+                Label title;
+                MatrixView matrixView;
+                OwnedArray<Label> chanLabels;
+                ColourBar colourBar;
+
+            } unmixingInfo;
+
+        } canvas;
+
+        // colorbrewer red/blue map
+        static const ColourGradient colourMap;
+
+        static const int colourBarY;
+        static const int colourBarHeight;
+
+        // width of colourBar and side length of each matrix entry
+        static const int unitLength;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICACanvas);
     };

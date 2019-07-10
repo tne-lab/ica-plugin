@@ -23,7 +23,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace ICA;
 
-
 /*****  ICANode *****/
 
 // static members
@@ -234,7 +233,8 @@ void ICANode::updateSettings()
         auto newDataEntry = newSubProcData.find(sourceFullId);
         if (newDataEntry != newSubProcData.end()) // found in new map
         {
-            newDataEntry->second.channelInds.add(c);                  
+            newDataEntry->second.channelInds.add(c);
+            subProcInfo[sourceFullId].channelNames.add(chan->getName());
         }
         else // not found in new map
         {
@@ -244,6 +244,7 @@ void ICANode::updateSettings()
             newInfo.sourceID = sourceID;
             newInfo.subProcIdx = subProcIdx;
             newInfo.sourceName = chan->getSourceName();
+            newInfo.channelNames.add(chan->getName());
 
             SubProcData& newData = newSubProcData[sourceFullId];
 
@@ -340,18 +341,7 @@ void ICANode::setDirSuffix(const String& suffix)
     icaDirSuffix = suffix.isEmpty() ? String() : "_" + suffix;
 }
 
-
-bool ICANode::SubProcInfo::operator==(const SubProcInfo& other) const
-{
-    return sourceID == other.sourceID && subProcIdx == other.subProcIdx;
-}
-
-ICANode::SubProcInfo::operator String() const
-{
-    return sourceName + " " + String(sourceID) + "/" + String(subProcIdx);
-}
-
-const std::map<uint32, ICANode::SubProcInfo>& ICANode::getSubProcInfo() const
+const std::map<uint32, SubProcInfo>& ICANode::getSubProcInfo() const
 {
     return subProcInfo;
 }
@@ -370,7 +360,7 @@ void ICANode::setCurrSubProc(uint32 fullId)
     }
     else
     {
-        auto& newSubProcData = subProcData.find(fullId);
+        auto newSubProcData = subProcData.find(fullId);
         if (newSubProcData == subProcData.end())
         {
             jassertfalse;
@@ -384,12 +374,13 @@ void ICANode::setCurrSubProc(uint32 fullId)
 
 const Value& ICANode::getPctFullValue() const
 {
-    if (currSubProc == 0)
+    auto subProcEntry = subProcData.find(currSubProc);
+    if (subProcEntry == subProcData.end())
     {
         return noInputVal;
     }
 
-    return subProcData.at(currSubProc).dataCache->getPctFull();
+    return subProcEntry->second.dataCache->getPctFull();
 }
 
 
@@ -400,6 +391,26 @@ const Value& ICANode::addConfigPathListener(Value::Listener* listener)
         currICAConfigPath.addListener(listener);
     }
     return currICAConfigPath;
+}
+
+
+const ICAOperation* ICANode::getICAOperation(ScopedPointer<ScopedReadLock>& lock) const
+{
+    auto subProcEntry = subProcData.find(currSubProc);
+    if (subProcEntry == subProcData.end())
+    {
+        return nullptr;
+    }
+
+    lock = new ScopedReadLock(subProcEntry->second.icaMutex);
+    const ICAOperation* op = subProcEntry->second.icaOp;
+    if (op->isNoop())
+    {
+        lock = nullptr;
+        return nullptr;
+    }
+
+    return op;
 }
 
 
@@ -915,6 +926,20 @@ void ICANode::reportError(const String& whatHappened)
     CoreServices::sendStatusMessage("ICA failed: " + whatHappened);
     wait(5000);
 }
+
+
+/**** SubProcInfo ****/
+
+bool SubProcInfo::operator==(const SubProcInfo& other) const
+{
+    return sourceID == other.sourceID && subProcIdx == other.subProcIdx;
+}
+
+SubProcInfo::operator String() const
+{
+    return sourceName + " " + String(sourceID) + "/" + String(subProcIdx);
+}
+
 
 /****  AudioBufferFifo ****/
 

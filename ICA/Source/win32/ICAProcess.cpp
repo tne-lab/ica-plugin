@@ -23,6 +23,19 @@ using namespace ICA;
 
 class ICAProcess::NativeICAProcess
 {
+    struct ConsoleWrapper
+    {
+        ConsoleWrapper()
+        {
+            AllocConsole();
+        }
+
+        ~ConsoleWrapper()
+        {
+            FreeConsole();
+        }
+    };
+
 public:
     NativeICAProcess(const File& configFilename)
     {
@@ -46,8 +59,22 @@ public:
 
         startupInfo.dwFlags = STARTF_USESTDHANDLES;
         startupInfo.hStdInput = configFile;
-        startupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-        startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+        HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        HANDLE hStdErr = GetStdHandle(STD_ERROR_HANDLE);
+
+        if (hStdOut == NULL || hStdErr == NULL)
+        {
+            // allocate a new console
+            console = new ConsoleWrapper();
+            hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+            hStdErr = GetStdHandle(STD_ERROR_HANDLE);
+
+            jassert(hStdOut != NULL && hStdErr != NULL);
+        }
+
+        startupInfo.hStdOutput = hStdOut;
+        startupInfo.hStdError = hStdErr;
 
         static const String binicaExe =
             File::getSpecialLocation(File::hostApplicationPath)
@@ -112,6 +139,7 @@ public:
 private:
     HANDLE configFile = 0;
     PROCESS_INFORMATION processInfo = {};
+    ScopedPointer<ConsoleWrapper> console;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NativeICAProcess);
 };

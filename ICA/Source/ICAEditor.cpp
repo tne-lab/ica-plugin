@@ -50,8 +50,10 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     , clearButton       ("X", Font("Default", 12, Font::plain))
     , configPathVal     (parentNode->addConfigPathListener(this))
 {
+    tabText = "ICA";
+
     // we always want to have a canvas available, makes things a lot simpler
-    canvas = new ICACanvas(parentNode);
+    canvas = new ICACanvas(*parentNode);
 
     subProcLabel.setBounds(10, 30, 50, 20);
     subProcLabel.setTooltip(subProcTooltip);
