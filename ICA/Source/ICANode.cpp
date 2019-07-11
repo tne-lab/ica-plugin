@@ -159,13 +159,39 @@ void ICANode::process(AudioSampleBuffer& buffer)
         const ICAOperation& op = *data.icaOp;
         
         const Array<int>& icaChansRel = op.enabledChannels;
-        int nChans = icaChansRel.size();
-        int nComps = op.components.size();
+        int nChans = icaChansRel.size(); // also number of total components
 
-        for (int kComp = 0; kComp < nComps; ++kComp)
+        // whether to start from 0 and add components or start from all and subtract them
+        bool additive = op.rejectedComponents.size() > nChans / 2;
+        
+        Array<int> comps;
+        if (additive)
         {
-            int comp = op.components[kComp];
+            int c = -1;
+            for (int rc : op.rejectedComponents)
+            {
+                // invariant: c is an index we want to skip
+                for (++c; c < rc && c < nChans; ++c)
+                {
+                    comps.add(c);
+                }
+            }
 
+            // clear all channels to start
+            for (int kChan = 0; kChan < nChans; ++kChan)
+            {
+                buffer.clear(data.channelInds[icaChansRel[kChan]], 0, nSamps);
+            }
+        }
+        else
+        {
+            comps = op.rejectedComponents;
+        }
+
+        int nComps = comps.size();
+
+        for (int comp : comps)
+        {
             componentBuffer.clear(nSamps);
 
             // unmix into the components
@@ -174,7 +200,7 @@ void ICANode::process(AudioSampleBuffer& buffer)
                 int chan = data.channelInds[icaChansRel[kChan]]; 
 
                 FloatVectorOperations::addWithMultiply(componentBuffer,
-                    buffer.getReadPointer(chan), op.unmixing(kComp, kChan), nSamps);
+                    buffer.getReadPointer(chan), op.unmixing(comp, kChan), nSamps);
             }
 
             // remix back into channels
@@ -182,18 +208,13 @@ void ICANode::process(AudioSampleBuffer& buffer)
             {
                 int chan = data.channelInds[icaChansRel[kChan]];
 
-                if (op.keep)
+                if (additive)
                 {
-                    // if we're keeping selected components, have to clear first
-                    if (kComp == 0)
-                    {
-                        buffer.clear(chan, 0, nSamps);
-                    }
-                    buffer.addFrom(chan, 0, componentBuffer, nSamps, op.mixing(kChan, kComp));
+                    buffer.addFrom(chan, 0, componentBuffer, nSamps, op.mixing(kChan, comp));
                 }
                 else
                 {
-                    buffer.addFrom(chan, 0, componentBuffer, nSamps, -op.mixing(kChan, kComp));
+                    buffer.addFrom(chan, 0, componentBuffer, nSamps, -op.mixing(kChan, comp));
                 }
             }
         }
@@ -300,8 +321,16 @@ void ICANode::updateSettings()
     subProcData.swap(newSubProcData);
     
     currSubProc = newSubProc;
-    SubProcData& data = subProcData[currSubProc];
-    currICAConfigPath.referTo(data.icaConfigPath);
+
+    if (currSubProc == 0)
+    {
+        currICAConfigPath = "";
+    }
+    else
+    {
+        SubProcData& data = subProcData[currSubProc];
+        currICAConfigPath.referTo(data.icaConfigPath);
+    }
 }
 
 
@@ -369,6 +398,17 @@ void ICANode::setCurrSubProc(uint32 fullId)
         currSubProc = fullId;
         currICAConfigPath.referTo(newSubProcData->second.icaConfigPath);
     }
+}
+
+const StringArray* ICANode::getCurrSubProcChannelNames() const
+{
+    auto currSubProcInfo = subProcInfo.find(currSubProc);
+    if (currSubProcInfo == subProcInfo.end())
+    {
+        return nullptr;
+    }
+
+    return &currSubProcInfo->second.channelNames;
 }
 
 
@@ -726,8 +766,7 @@ bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
     }
 
     // reject first component by default
-    info.op->keep = false;
-    info.op->components.add(0);
+    info.op->rejectedComponents.add(0);
 
     // see if we can reuse an existing "components" array
     // this is only allowed if this subprocessor has an existing ICA transformation
@@ -735,9 +774,8 @@ bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
     ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
     if (oldOp->enabledChannels == info.op->enabledChannels)
     {
-        // take old op's components and keep
-        info.op->components.swapWith(oldOp->components);
-        info.op->keep = oldOp->keep;
+        // take old op's components
+        info.op->rejectedComponents.swapWith(oldOp->rejectedComponents);
     }
 
     oldOp.swapWith(info.op);

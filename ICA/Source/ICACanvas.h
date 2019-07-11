@@ -23,11 +23,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <VisualizerWindowHeaders.h>
 #include <EditorHeaders.h> // for electrode button
 
+#include <tuple>
+
 #include "ICANode.h"
 
 namespace ICA
 {
-    class ICACanvas : public Visualizer, public Value::Listener
+    class ICACanvas : public Visualizer, public Value::Listener, public Button::Listener
     {
     public:
         ICACanvas(ICANode& proc);
@@ -36,6 +38,9 @@ namespace ICA
         void paint(Graphics& g) override;
 
         void valueChanged(Value& value) override;
+
+        void buttonClicked(Button*) override {}
+        void buttonStateChanged(Button* button) override;
 
         void refreshState() override;
         void update() override;
@@ -93,20 +98,26 @@ namespace ICA
 
         Viewport viewport;
 
+        struct UpdateInfo
+        {
+            const ICAOperation& op;
+            const StringArray& chanNames;
+        };
+
         // hierarchical singleton struct of displayed components
         // it seemed messy to have all the nested components as top-level members of ICACanvas
         // hopefully this isn't even more confusing...
         struct ContentCanvas : public Component
         {
-            ContentCanvas();
-
-            void update(const ICAOperation& op);
+            ContentCanvas(ICACanvas& visualizer);
+            
+            void update(UpdateInfo info);
 
             struct MixingInfo : public Component
             {
                 MixingInfo();
 
-                void update(int startX, const Matrix& mixing);
+                void update(UpdateInfo info);
 
                 ColourBar colourBar;
                 Label title;
@@ -121,13 +132,16 @@ namespace ICA
 
             struct ComponentSelectionArea : public Component
             {
-                ComponentSelectionArea();
+                ComponentSelectionArea(ICACanvas& visualizer);
 
-                void update(int startX, const ICAOperation& op);
+                void update(UpdateInfo info);
 
                 Label title;
-                DrawableRectangle selectionGrid;
+                Label selectionBox;
                 OwnedArray<ElectrodeButton> componentButtons;
+
+            private:
+                ICACanvas& visualizer;
 
             } componentSelectionArea;
 
@@ -137,7 +151,7 @@ namespace ICA
             {
                 UnmixingInfo();
 
-                void update(int startX, const Matrix& unmixing);
+                void update(UpdateInfo info);
 
                 Label title;
                 MatrixView matrixView;
@@ -145,6 +159,14 @@ namespace ICA
                 ColourBar colourBar;
 
             } unmixingInfo;
+
+        private:
+
+            static void formatLargeLabel(Label& label, int width = 0);
+
+            static int getNaturalWidth(const Label& label);
+
+            ICACanvas& visualizer;
 
         } canvas;
 

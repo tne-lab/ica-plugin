@@ -117,17 +117,19 @@ namespace ICA
         JUCE_LEAK_DETECTOR(SubProcInfo);
     };
 
+    // an ICAOperation operates on a specific set of channels within a given subprocessor,
+    // but should be agnostic to the identity of the subprocessor and of the channels within it.
+    // this allows it to be loaded in similar but nonidentical signal chains.
     struct ICAOperation
     {
         Matrix mixing;
         Matrix unmixing;
-        Array<int> enabledChannels; // of this subprocessor's channels, which to include in ica
-        Array<int> components;      // which components to keep or reject
-        bool keep = false;          // true == keep selected components, false == reject
+        Array<int> enabledChannels;   // of this subprocessor's channels, which to include in ica
+        Array<int> rejectedComponents;
 
         inline bool isNoop() const
         {
-            return enabledChannels.isEmpty();
+            return enabledChannels.isEmpty() || rejectedComponents.isEmpty();
         }
 
         JUCE_LEAK_DETECTOR(ICAOperation);
@@ -181,6 +183,9 @@ namespace ICA
         const std::map<uint32, SubProcInfo>& getSubProcInfo() const;
         uint32 getCurrSubProc() const;
         void setCurrSubProc(uint32 fullId);
+
+        // returns null if no current subproc
+        const StringArray* getCurrSubProcChannelNames() const;
 
         // for editor indicator
         const Value& getPctFullValue() const;

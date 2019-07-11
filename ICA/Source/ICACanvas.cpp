@@ -34,11 +34,12 @@ const ColourGradient ICACanvas::colourMap = []
 const int ICACanvas::colourBarY = colourMap.point2.y;
 const int ICACanvas::colourBarHeight = colourMap.point1.y - colourBarY;
 
-const int ICACanvas::unitLength = 20;
+const int ICACanvas::unitLength = 24;
 
 ICACanvas::ICACanvas(ICANode& proc)
     : node              (proc)
     , configPathVal     (proc.addConfigPathListener(this))
+    , canvas            (*this)
 {
     viewport.setViewedComponent(&canvas, false);
     viewport.setScrollBarsShown(true, true);
@@ -50,7 +51,6 @@ void ICACanvas::resized()
     int vpWidth = getWidth();
     int vpHeight = getHeight();
     viewport.setSize(vpWidth, vpHeight);
-    canvas.setSize(vpWidth, vpHeight); // for now
 }
 
 void ICACanvas::paint(Graphics& g)
@@ -64,34 +64,44 @@ void ICACanvas::valueChanged(Value& value)
     {
         // this is how we get notified of a change to the ICA operation.
         // update everything.
-
-        ScopedPointer<ScopedReadLock> icaLock;
-        const ICAOperation* op = node.getICAOperation(icaLock);
-
-        if (op)
-        {
-            canvas.update(*op);
-            viewport.setVisible(true);
-        }
-        else
-        {
-            viewport.setVisible(false);
-        }
+        update();
     }    
 }
 
+void ICACanvas::buttonStateChanged(Button* button)
+{
+
+}
+
+void ICACanvas::update()
+{
+    ScopedPointer<ScopedReadLock> icaLock;
+    const ICAOperation* op = node.getICAOperation(icaLock);
+
+    if (!op)
+    {
+        viewport.setVisible(false);
+        return;
+    }
+
+    const StringArray* chanNames = node.getCurrSubProcChannelNames();
+
+    if (!chanNames)
+    {
+        viewport.setVisible(false);
+        return;
+    }
+
+    canvas.update({ *op, *chanNames });
+    viewport.setVisible(true);
+}
+
+// not using animation features
 void ICACanvas::refreshState() {}
-
-void ICACanvas::update() {}
-
 void ICACanvas::refresh() {}
-
 void ICACanvas::beginAnimation() {}
-
 void ICACanvas::endAnimation() {}
-
 void ICACanvas::setParameter(int, float) {}
-
 void ICACanvas::setParameter(int, int, int, float) {}
 
 
@@ -158,67 +168,268 @@ float ICACanvas::ColourBar::getAbsoluteMax() const
 void ICACanvas::ColourBar::paint(Graphics& g)
 {
     g.setColour(Colours::white);
-    g.drawSingleLineText(String(absMax), 0, colourBarY - 5);
-    g.drawSingleLineText(String(-absMax), 0, getHeight());
+    g.drawSingleLineText(String(absMax, 3), 0, colourBarY - 5);
+    g.drawSingleLineText(String(-absMax, 3), 0, getHeight());
 
     g.setGradientFill(colourMap);
     g.fillRect(0, colourBarY, unitLength, colourBarHeight);
 }
 
 
-ICACanvas::ContentCanvas::ContentCanvas()
-    : Component("ICA canvas")
+ICACanvas::ContentCanvas::ContentCanvas(ICACanvas& visualizer)
+    : Component             ("ICA canvas")
+    , multiplySign1         ("X 1", L"\u00d7")
+    , componentSelectionArea(visualizer)
+    , multiplySign2         ("X 2", L"\u00d7")
+    , visualizer            (visualizer)
 {
-    for (Label* xSign : { &multiplySign1, &multiplySign2 })
-    {
-        xSign->setText("\u00d7", dontSendNotification);
-        xSign->setSize(20, 20);
-        xSign->setFont({ 16, Font::bold });
-        xSign->setJustificationType(Justification::centred);
-        xSign->setColour(Label::textColourId, Colours::white);
-        addAndMakeVisible(xSign);
-    }
-
+    mixingInfo.setTopLeftPosition(30, 30);
     addAndMakeVisible(mixingInfo);
+
+    formatLargeLabel(multiplySign1, 48);
+    addAndMakeVisible(multiplySign1);
+
     addAndMakeVisible(componentSelectionArea);
+
+    formatLargeLabel(multiplySign2, 48);
+    addAndMakeVisible(multiplySign2);
+
     addAndMakeVisible(unmixingInfo);
 }
 
-void ICACanvas::ContentCanvas::update(const ICAOperation& op)
+void ICACanvas::ContentCanvas::update(UpdateInfo info)
 {
-    mixingInfo.update(10, op.mixing);
-    // y-coordinate of center line
-    int centreY = mixingInfo.matrixView.getY() + mixingInfo.matrixView.getHeight() / 2;
+    mixingInfo.update(info);
 
-    multiplySign1.setCentrePosition(mixingInfo.getRight() + multiplySign1.getWidth() / 2, centreY);
-    
-    componentSelectionArea.update(multiplySign1.getRight(), op);
+    multiplySign1.setSize(multiplySign1.getWidth(), mixingInfo.matrixView.getHeight());
+    multiplySign1.setTopLeftPosition(getLocalPoint(&mixingInfo,
+        mixingInfo.matrixView.getBounds().getTopRight()));
 
-    multiplySign2.setCentrePosition(componentSelectionArea.getRight() + multiplySign2.getWidth() / 2, centreY);
+    componentSelectionArea.setTopLeftPosition(
+        mixingInfo.getBounds().getTopRight().translated(multiplySign1.getWidth(), 0));
+    componentSelectionArea.update(info);
 
-    unmixingInfo.update(multiplySign2.getRight(), op.unmixing);
+    multiplySign2.setSize(multiplySign2.getWidth(), componentSelectionArea.selectionBox.getHeight());
+    multiplySign2.setTopLeftPosition(getLocalPoint(&componentSelectionArea,
+        componentSelectionArea.selectionBox.getBounds().getTopRight()));
+
+    unmixingInfo.setTopLeftPosition(
+        componentSelectionArea.getBounds().getTopRight().translated(multiplySign2.getWidth(), 0));
+    unmixingInfo.update(info);
+
+    // make sure everything fits
+    setSize(unmixingInfo.getRight(), mixingInfo.getBottom());
+}
+
+void ICACanvas::ContentCanvas::formatLargeLabel(Label& label, int width)
+{
+    label.setFont({ 24, Font::bold });
+    label.setColour(Label::textColourId, Colours::white);
+    label.setSize(width, 30);
+    label.setJustificationType(Justification::centred);
+}
+
+
+int ICACanvas::ContentCanvas::getNaturalWidth(const Label& label)
+{
+    return label.getFont().getStringWidth(label.getText());
 }
 
 
 ICACanvas::ContentCanvas::MixingInfo::MixingInfo()
-    : matrixView(colourBar)
+    : title     ("Mixing title", "MIXING")
+    , matrixView(colourBar)
     , normView  (colourBar)
-{}
-
-void ICACanvas::ContentCanvas::MixingInfo::update(int startX, const Matrix& mixing)
+    , normLabel ("Mixing norm label", "NORM")
 {
+    formatLargeLabel(title);
+    addAndMakeVisible(title);
 
+    colourBar.setTopLeftPosition(0, 0);
+    addAndMakeVisible(colourBar);
+
+    addAndMakeVisible(matrixView);
+
+    addAndMakeVisible(normView);
+
+    formatLargeLabel(normLabel);
+    addAndMakeVisible(normLabel);
 }
 
-ICACanvas::ContentCanvas::ComponentSelectionArea::ComponentSelectionArea()
-{}
+void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
+{
+    colourBar.resetRange();
 
-void ICACanvas::ContentCanvas::ComponentSelectionArea::update(int startX, const ICAOperation& op)
-{}
+    int nChans = info.op.mixing.rows();
+    int nComps = info.op.mixing.cols();
+
+    matrixView.setSize(nComps * unitLength, nChans * unitLength);
+    matrixView.setData(info.op.mixing);
+
+    normView.setSize(nComps * unitLength, unitLength);
+    normView.setData(info.op.mixing.colwise().norm());
+
+    // layout
+    StringArray usedChannelNames;
+    Font chanLabelFont(12, Font::plain);
+    int labelWidth = 0;
+
+    for (int c = 0; c < nChans; ++c)
+    {
+        const String& chanName = info.chanNames[info.op.enabledChannels[c]];
+        usedChannelNames.add(chanName);
+        labelWidth = jmax(labelWidth, chanLabelFont.getStringWidth(chanName));
+    }
+
+    // add some extra buffer
+    labelWidth += 10;
+
+    if (chanLabels.size() > nChans)
+    {
+        chanLabels.removeLast(chanLabels.size() - nChans);
+    }
+
+    for (int c = 0; c < nChans; ++c)
+    {
+        Label* label = chanLabels[c];
+        if (!label)
+        {
+            label = chanLabels.set(c, new Label());
+            label->setColour(Label::textColourId, Colours::white);
+            label->setFont(chanLabelFont);
+            label->setJustificationType(Justification::right);
+            label->setTopLeftPosition(colourBar.getRight() + unitLength, title.getHeight() + c * unitLength);
+            addAndMakeVisible(label);
+        }
+
+        label->setText(usedChannelNames[c], dontSendNotification);
+        label->setSize(labelWidth, unitLength);
+    }
+
+    title.setSize(jmax(matrixView.getWidth(), getNaturalWidth(title)), title.getHeight());
+    title.setTopLeftPosition(chanLabels[0]->getRight(), 0);
+
+    matrixView.setTopLeftPosition(title.getX(), title.getBottom());
+
+    normView.setTopLeftPosition(title.getX(), matrixView.getBottom() + unitLength);
+
+    normLabel.setSize(jmax(matrixView.getWidth(), getNaturalWidth(normLabel)), normLabel.getHeight());
+    normLabel.setTopLeftPosition(title.getX(), normView.getBottom());
+
+    setSize(jmax(title.getRight(), matrixView.getRight()), jmax(colourBar.getBottom(), normLabel.getBottom()));
+}
+
+ICACanvas::ContentCanvas::ComponentSelectionArea::ComponentSelectionArea(ICACanvas& visualizer)
+    : title         ("Component selection title", "KEEP COMPONENTS:")
+    , selectionBox  ("Component selection box", "")
+    , visualizer    (visualizer)
+{
+    formatLargeLabel(title);
+    addAndMakeVisible(title);
+
+    selectionBox.setColour(Label::backgroundColourId, Colours::lightgrey);
+    selectionBox.setTopLeftPosition(0, title.getHeight());
+    addAndMakeVisible(selectionBox);
+}
+
+void ICACanvas::ContentCanvas::ComponentSelectionArea::update(UpdateInfo info)
+{
+    int nComps = info.op.mixing.cols();
+
+    selectionBox.setSize(nComps * unitLength, nComps * unitLength);
+
+    title.setSize(jmax(selectionBox.getWidth(), getNaturalWidth(title)), title.getHeight());
+
+    // component buttons
+    if (componentButtons.size() > nComps)
+    {
+        componentButtons.removeLast(componentButtons.size() - nComps);
+    }
+
+    for (int c = 0; c < nComps; ++c)
+    {
+        ElectrodeButton* btn = componentButtons[c];
+        if (!btn)
+        {
+            btn = componentButtons.set(c, new ElectrodeButton(c + 1));
+            btn->addListener(&visualizer);
+            btn->setAlwaysOnTop(true);
+            btn->setSize(unitLength, unitLength);
+            btn->setTopLeftPosition(selectionBox.getPosition().translated(unitLength * c, unitLength * c));
+
+            addAndMakeVisible(btn);
+        }
+
+        btn->setToggleState(true, dontSendNotification);
+    }
+
+    for (int cOff : info.op.rejectedComponents)
+    {
+        componentButtons[cOff]->setToggleState(false, dontSendNotification);
+    }
+
+    setSize(jmax(title.getRight(), selectionBox.getRight()), selectionBox.getBottom());
+}
 
 ICACanvas::ContentCanvas::UnmixingInfo::UnmixingInfo()
-    : matrixView(colourBar)
-{}
+    : title     ("Unmixing title", "UNMIXING")
+    , matrixView(colourBar)
+{
+    formatLargeLabel(title);
+    title.setTopLeftPosition(0, 0);
+    addAndMakeVisible(title);
 
-void ICACanvas::ContentCanvas::UnmixingInfo::update(int startX, const Matrix& unmixing)
-{}
+    matrixView.setTopLeftPosition(0, title.getBottom());
+    addAndMakeVisible(matrixView);
+
+    addAndMakeVisible(colourBar);
+}
+
+void ICACanvas::ContentCanvas::UnmixingInfo::update(UpdateInfo info)
+{
+    colourBar.resetRange();
+
+    int nComps = info.op.unmixing.rows();
+    int nChans = info.op.unmixing.cols();
+
+    matrixView.setSize(nChans * unitLength, nComps * unitLength);
+    matrixView.setData(info.op.unmixing);
+
+    // layout
+    title.setSize(jmax(matrixView.getWidth(), getNaturalWidth(title)), title.getHeight());
+
+    colourBar.setTopLeftPosition(title.getBounds().getTopRight().translated(unitLength * 3 / 2, 0));
+    
+    if (chanLabels.size() > nChans)
+    {
+        chanLabels.removeLast(chanLabels.size() - nChans);
+    }
+
+    int labelHeight = 0;
+    for (int c = 0; c < nChans; ++c)
+    {
+        Label* label = chanLabels[c];
+        if (!label)
+        {
+            label = chanLabels.set(c, new Label());
+            label->setColour(Label::textColourId, Colours::white);
+            label->setFont({ 12, Font::plain });
+            label->setJustificationType(Justification::left);
+
+            int x = matrixView.getX() + (c + 1) * unitLength; // pivot point is right side of column
+            int y = matrixView.getBottom();
+            label->setTopLeftPosition(x, y);
+            // rotate 90 degrees 
+            label->setTransform(AffineTransform::rotation(float_Pi / 2, x, y));
+
+            addAndMakeVisible(label);
+        }
+
+        label->setText(info.chanNames[info.op.enabledChannels[c]], dontSendNotification);
+        label->setSize(getNaturalWidth(*label) + 10, unitLength);
+
+        labelHeight = jmax(labelHeight, label->getBoundsInParent().getHeight());
+    }
+
+    setSize(colourBar.getRight(), jmax(colourBar.getBottom(), matrixView.getBottom() + labelHeight));
+}
