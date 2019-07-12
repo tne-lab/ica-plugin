@@ -32,14 +32,14 @@ const String ICANode::inputFilename("input.floatdata");
 const String ICANode::configFilename("binica.sc");
 const String ICANode::weightFilename("output.wts");
 const String ICANode::sphereFilename("output.sph");
-const String ICANode::mixingFilename("mixing.dat");
-const String ICANode::unmixingFilename("unmixing.dat");
+const String ICANode::mixingFilename("output.mix");
+const String ICANode::unmixingFilename("output.unmix");
 
 ICANode::ICANode()
     : GenericProcessor          ("ICA")
     , ThreadWithProgressWindow  ("ICA Computation", true, true)
-    , icaSamples                (int(icaTargetFs * 120))
-    , componentBuffer           (1024)
+    , icaSamples                (int(icaTargetFs * 240))
+    , componentBuffer           (16, 1024)
     , currSubProc               (0)
 {
     setProcessorType(PROCESSOR_TYPE_FILTER);
@@ -125,7 +125,7 @@ void ICANode::process(AudioSampleBuffer& buffer)
 {
     // should only do anything on the first buffer, since "buffer" 
     // should always be the same length during acquisition
-    componentBuffer.realloc(buffer.getNumSamples());
+    componentBuffer.setSize(componentBuffer.getNumChannels(), buffer.getNumSamples(), false, false, true);
 
     // process each subprocessor individually
     for (auto& subProcEntry : subProcData)
@@ -158,30 +158,21 @@ void ICANode::process(AudioSampleBuffer& buffer)
 
         const ICAOperation& op = *data.icaOp;
         
-        const Array<int>& icaChansRel = op.enabledChannels;
+        const SortedSet<int>& icaChansRel = op.enabledChannels;
         int nChans = icaChansRel.size(); // also number of total components
 
         // whether to start from 0 and add components or start from all and subtract them
         bool additive = op.rejectedComponents.size() > nChans / 2;
         
-        Array<int> comps;
+        SortedSet<int> comps;
         if (additive)
         {
-            int c = -1;
-            for (int rc : op.rejectedComponents)
+            for (int i = 0; i < nChans; ++i)
             {
-                // invariant: c is an index we want to skip
-                for (++c; c < rc && c < nChans; ++c)
-                {
-                    comps.add(c);
-                }
+                comps.add(i);
             }
 
-            // clear all channels to start
-            for (int kChan = 0; kChan < nChans; ++kChan)
-            {
-                buffer.clear(data.channelInds[icaChansRel[kChan]], 0, nSamps);
-            }
+            comps.removeValuesIn(op.rejectedComponents);
         }
         else
         {
@@ -192,17 +183,28 @@ void ICANode::process(AudioSampleBuffer& buffer)
 
         for (int comp : comps)
         {
-            componentBuffer.clear(nSamps);
+            componentBuffer.clear(comp, 0, nSamps);
 
             // unmix into the components
             for (int kChan = 0; kChan < nChans; ++kChan)
             {
-                int chan = data.channelInds[icaChansRel[kChan]]; 
+                int chan = data.channelInds[icaChansRel[kChan]];
 
-                FloatVectorOperations::addWithMultiply(componentBuffer,
-                    buffer.getReadPointer(chan), op.unmixing(comp, kChan), nSamps);
+                componentBuffer.addFrom(comp, 0, buffer, chan, 0, nSamps, op.unmixing(comp, kChan));
             }
+        }
 
+        if (additive)
+        {
+            // clear channels before adding components we want to keep
+            for (int kChan = 0; kChan < nChans; ++kChan)
+            {
+                buffer.clear(data.channelInds[icaChansRel[kChan]], 0, nSamps);
+            }
+        }
+
+        for (int comp : comps)
+        {
             // remix back into channels
             for (int kChan = 0; kChan < nChans; ++kChan)
             {
@@ -210,11 +212,11 @@ void ICANode::process(AudioSampleBuffer& buffer)
 
                 if (additive)
                 {
-                    buffer.addFrom(chan, 0, componentBuffer, nSamps, op.mixing(kChan, comp));
+                    buffer.addFrom(chan, 0, componentBuffer, comp, 0, nSamps, op.mixing(kChan, comp));
                 }
                 else
                 {
-                    buffer.addFrom(chan, 0, componentBuffer, nSamps, -op.mixing(kChan, comp));
+                    buffer.addFrom(chan, 0, componentBuffer, comp, 0, nSamps, -op.mixing(kChan, comp));
                 }
             }
         }
@@ -298,11 +300,14 @@ void ICANode::updateSettings()
     }
 
     // do things that require knowing # channels per subproc
+    int maxSubProcChans = 0;
+
     for (auto& dataEntry : newSubProcData)
     {
         uint32 subProc = dataEntry.first;
         SubProcData& data = dataEntry.second;
         int nChans = data.channelInds.size();
+        maxSubProcChans = jmax(maxSubProcChans, nChans);
 
         AudioBufferFifo::LockHandle dataHandle(*data.dataCache);
         dataHandle.resetWithSize(nChans, icaSamples);
@@ -331,6 +336,9 @@ void ICANode::updateSettings()
         SubProcData& data = subProcData[currSubProc];
         currICAConfigPath.referTo(data.icaConfigPath);
     }
+
+    // ensure space for maximum # of components
+    componentBuffer.setSize(maxSubProcChans, componentBuffer.getNumSamples());
 }
 
 
@@ -434,7 +442,7 @@ const Value& ICANode::addConfigPathListener(Value::Listener* listener)
 }
 
 
-const ICAOperation* ICANode::getICAOperation(ScopedPointer<ScopedReadLock>& lock) const
+const ICAOperation* ICANode::readICAOperation(ScopedPointer<ScopedReadLock>& lock) const
 {
     auto subProcEntry = subProcData.find(currSubProc);
     if (subProcEntry == subProcData.end())
@@ -444,6 +452,25 @@ const ICAOperation* ICANode::getICAOperation(ScopedPointer<ScopedReadLock>& lock
 
     lock = new ScopedReadLock(subProcEntry->second.icaMutex);
     const ICAOperation* op = subProcEntry->second.icaOp;
+    if (op->isNoop())
+    {
+        lock = nullptr;
+        return nullptr;
+    }
+
+    return op;
+}
+
+ICAOperation* ICANode::writeICAOperation(ScopedPointer<ScopedWriteLock>& lock) const
+{
+    auto subProcEntry = subProcData.find(currSubProc);
+    if (subProcEntry == subProcData.end())
+    {
+        return nullptr;
+    }
+
+    lock = new ScopedWriteLock(subProcEntry->second.icaMutex);
+    ICAOperation* op = subProcEntry->second.icaOp;
     if (op->isNoop())
     {
         lock = nullptr;
@@ -485,7 +512,7 @@ void ICANode::run()
     }
 
     // enabled channels = which channels of current subprocessor are enabled
-    const Array<int>& subProcChans = subProcData[info.subProc].channelInds;
+    const SortedSet<int>& subProcChans = subProcData[info.subProc].channelInds;
     int nSubProcChans = subProcChans.size();
 
     GenericEditor* ed = getEditor();
@@ -1044,7 +1071,7 @@ void AudioBufferFifo::Handle::resetWithSize(int numChans, int numSamps)
 
 
 void AudioBufferFifo::Handle::copySample(const AudioSampleBuffer& source,
-    const Array<int>& channels, int sample)
+    const SortedSet<int>& channels, int sample)
 {
     if (!isValid()) { return; }
 
@@ -1119,7 +1146,7 @@ void AudioBufferFifo::Handle::resizeKeepingData(int numSamps)
 }
 
 
-Result AudioBufferFifo::Handle::writeChannelsToFile(const File& file, const Array<int>& channels)
+Result AudioBufferFifo::Handle::writeChannelsToFile(const File& file, const SortedSet<int>& channels)
 {
     if (!isValid())
     {

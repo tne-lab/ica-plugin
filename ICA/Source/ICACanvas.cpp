@@ -19,20 +19,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace ICA;
 
-const ColourGradient ICACanvas::colourMap = []
-{
-    static const Colour negColour(0x21, 0x66, 0xac);
-    static const Colour posColour(0xb2, 0x18, 0x2b);
-
-    static ColourGradient map(negColour, 0, 220, posColour, 0, 20, false);
-    map.addColour(0.5, Colours::white);
-    return map;
-}();
 
 // confusing behavior: the gradient starts at this y position in any component that
 // calls g.setGradientFill (regardless of what area is actually filled).
-const int ICACanvas::colourBarY = colourMap.point2.y;
-const int ICACanvas::colourBarHeight = colourMap.point1.y - colourBarY;
+const int ICACanvas::colourBarY = 20;
+const int ICACanvas::colourBarHeight = 150;
 
 const int ICACanvas::unitLength = 24;
 
@@ -68,15 +59,36 @@ void ICACanvas::valueChanged(Value& value)
     }    
 }
 
-void ICACanvas::buttonStateChanged(Button* button)
+void ICACanvas::buttonClicked(Button* button)
 {
+    // must be an electrode button
+    auto eButton = static_cast<ElectrodeButton*>(button);
+    int kComp = eButton->getChannelNum() - 1; // to 0-based
+    bool selected = eButton->getToggleState();
 
+    ScopedPointer<ScopedWriteLock> icaLock;
+    ICAOperation* op = node.writeICAOperation(icaLock);
+
+    if (!op || op->enabledChannels.size() <= kComp)
+    {
+        // uh-oh, the canvas is out of sync. the valueChanged callback should resolve this.
+        return;
+    }
+
+    if (selected)
+    {
+        op->rejectedComponents.remove(kComp);
+    }
+    else
+    {
+        op->rejectedComponents.add(kComp);
+    }
 }
 
 void ICACanvas::update()
 {
     ScopedPointer<ScopedReadLock> icaLock;
-    const ICAOperation* op = node.getICAOperation(icaLock);
+    const ICAOperation* op = node.readICAOperation(icaLock);
 
     if (!op)
     {
@@ -130,9 +142,9 @@ void ICACanvas::MatrixView::paint(Graphics& g)
     {
         for (int c = 0; c < nCols; ++c)
         {
-            float limit = colourBar.getAbsoluteMax();
+            float limit = colourBar.absMax;
             float mappedPos = jmap(data(r, c), -limit, limit, 0.0f, 1.0f);
-            g.setColour(colourMap.getColourAtPosition(mappedPos));
+            g.setColour(colourBar.colourMap.getColourAtPosition(mappedPos));
             g.fillRect(c * colWidth, r * rowHeight, colWidth, rowHeight);
         }
     }
@@ -141,7 +153,11 @@ void ICACanvas::MatrixView::paint(Graphics& g)
 
 ICACanvas::ColourBar::ColourBar(float max)
     : Component ("Colour bar")
+    , colourMap({ 0x21, 0x66, 0xac }, 0, colourBarY + colourBarHeight,
+                { 0xb2, 0x18, 0x2b }, 0, colourBarY, false)
 {
+    colourMap.addColour(0.5, Colours::white);
+
     setSize(50, colourBarHeight + 2 * colourBarY);
     resetRange(max);
 }
@@ -158,11 +174,6 @@ void ICACanvas::ColourBar::ensureValueInRange(float val)
     {
         resetRange(val);
     }
-}
-
-float ICACanvas::ColourBar::getAbsoluteMax() const
-{
-    return absMax;
 }
 
 void ICACanvas::ColourBar::paint(Graphics& g)
@@ -209,9 +220,9 @@ void ICACanvas::ContentCanvas::update(UpdateInfo info)
         mixingInfo.getBounds().getTopRight().translated(multiplySign1.getWidth(), 0));
     componentSelectionArea.update(info);
 
-    multiplySign2.setSize(multiplySign2.getWidth(), componentSelectionArea.selectionBox.getHeight());
+    multiplySign2.setSize(multiplySign2.getWidth(), componentSelectionArea.background.getHeight());
     multiplySign2.setTopLeftPosition(getLocalPoint(&componentSelectionArea,
-        componentSelectionArea.selectionBox.getBounds().getTopRight()));
+        componentSelectionArea.background.getBounds().getTopRight()));
 
     unmixingInfo.setTopLeftPosition(
         componentSelectionArea.getBounds().getTopRight().translated(multiplySign2.getWidth(), 0));
@@ -221,34 +232,45 @@ void ICACanvas::ContentCanvas::update(UpdateInfo info)
     setSize(unmixingInfo.getRight(), mixingInfo.getBottom());
 }
 
+
 void ICACanvas::ContentCanvas::formatLargeLabel(Label& label, int width)
 {
-    label.setFont({ 24, Font::bold });
+    label.setFont(getLargeFont());
     label.setColour(Label::textColourId, Colours::white);
     label.setSize(width, 30);
     label.setJustificationType(Justification::centred);
 }
-
 
 int ICACanvas::ContentCanvas::getNaturalWidth(const Label& label)
 {
     return label.getFont().getStringWidth(label.getText());
 }
 
+Font ICACanvas::ContentCanvas::getLargeFont()
+{
+    return{ 24, Font::bold };
+}
+
+Font ICACanvas::ContentCanvas::getSmallFont()
+{
+    return{ "Default", 12, Font::plain };
+}
 
 ICACanvas::ContentCanvas::MixingInfo::MixingInfo()
     : title     ("Mixing title", "MIXING")
-    , matrixView(colourBar)
-    , normView  (colourBar)
+    , matrixView(matrixColourBar)
+    , normView  (normColourBar)
     , normLabel ("Mixing norm label", "NORM")
 {
     formatLargeLabel(title);
     addAndMakeVisible(title);
 
-    colourBar.setTopLeftPosition(0, 0);
-    addAndMakeVisible(colourBar);
+    matrixColourBar.setTopLeftPosition(0, title.getHeight() - colourBarY);
+    addAndMakeVisible(matrixColourBar);
 
     addAndMakeVisible(matrixView);
+
+    addAndMakeVisible(normColourBar);
 
     addAndMakeVisible(normView);
 
@@ -258,7 +280,8 @@ ICACanvas::ContentCanvas::MixingInfo::MixingInfo()
 
 void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
 {
-    colourBar.resetRange();
+    matrixColourBar.resetRange();
+    normColourBar.resetRange();
 
     int nChans = info.op.mixing.rows();
     int nComps = info.op.mixing.cols();
@@ -298,7 +321,7 @@ void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
             label->setColour(Label::textColourId, Colours::white);
             label->setFont(chanLabelFont);
             label->setJustificationType(Justification::right);
-            label->setTopLeftPosition(colourBar.getRight() + unitLength, title.getHeight() + c * unitLength);
+            label->setTopLeftPosition(matrixColourBar.getRight() + unitLength, title.getHeight() + c * unitLength);
             addAndMakeVisible(label);
         }
 
@@ -311,34 +334,49 @@ void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
 
     matrixView.setTopLeftPosition(title.getX(), title.getBottom());
 
-    normView.setTopLeftPosition(title.getX(), matrixView.getBottom() + unitLength);
+    normView.setTopLeftPosition(title.getX(), jmax(matrixView.getBottom(), matrixColourBar.getBottom()) + 4 + colourBarY);
+
+    normColourBar.setTopLeftPosition(0, normView.getY() - colourBarY);
 
     normLabel.setSize(jmax(matrixView.getWidth(), getNaturalWidth(normLabel)), normLabel.getHeight());
     normLabel.setTopLeftPosition(title.getX(), normView.getBottom());
 
-    setSize(jmax(title.getRight(), matrixView.getRight()), jmax(colourBar.getBottom(), normLabel.getBottom()));
+    setSize(jmax(title.getRight(), matrixView.getRight()), jmax(normColourBar.getBottom(), normLabel.getBottom()));
 }
 
 ICACanvas::ContentCanvas::ComponentSelectionArea::ComponentSelectionArea(ICACanvas& visualizer)
     : title         ("Component selection title", "KEEP COMPONENTS:")
-    , selectionBox  ("Component selection box", "")
+    , background    ("Component selection background", "")
     , visualizer    (visualizer)
+    , buttonFont    (getSmallFont())
+    , allButton     ("ALL", buttonFont)
+    , noneButton    ("NONE", buttonFont)
+    , invertButton  ("INVERT", buttonFont)
 {
     formatLargeLabel(title);
     addAndMakeVisible(title);
 
-    selectionBox.setColour(Label::backgroundColourId, Colours::lightgrey);
-    selectionBox.setTopLeftPosition(0, title.getHeight());
-    addAndMakeVisible(selectionBox);
+    background.setColour(Label::backgroundColourId, Colours::lightgrey);
+    background.setTopLeftPosition(0, title.getHeight());
+    addAndMakeVisible(background);
+
+    allButton.addListener(this);
+    addAndMakeVisible(allButton);
+
+    noneButton.addListener(this);
+    addAndMakeVisible(noneButton);
+
+    invertButton.addListener(this);
+    addAndMakeVisible(invertButton);
 }
 
 void ICACanvas::ContentCanvas::ComponentSelectionArea::update(UpdateInfo info)
 {
     int nComps = info.op.mixing.cols();
 
-    selectionBox.setSize(nComps * unitLength, nComps * unitLength);
+    background.setSize(nComps * unitLength, nComps * unitLength);
 
-    title.setSize(jmax(selectionBox.getWidth(), getNaturalWidth(title)), title.getHeight());
+    title.setSize(jmax(background.getWidth(), getNaturalWidth(title)), title.getHeight());
 
     // component buttons
     if (componentButtons.size() > nComps)
@@ -355,7 +393,7 @@ void ICACanvas::ContentCanvas::ComponentSelectionArea::update(UpdateInfo info)
             btn->addListener(&visualizer);
             btn->setAlwaysOnTop(true);
             btn->setSize(unitLength, unitLength);
-            btn->setTopLeftPosition(selectionBox.getPosition().translated(unitLength * c, unitLength * c));
+            btn->setTopLeftPosition(background.getPosition().translated(unitLength * c, unitLength * c));
 
             addAndMakeVisible(btn);
         }
@@ -368,8 +406,60 @@ void ICACanvas::ContentCanvas::ComponentSelectionArea::update(UpdateInfo info)
         componentButtons[cOff]->setToggleState(false, dontSendNotification);
     }
 
-    setSize(jmax(title.getRight(), selectionBox.getRight()), selectionBox.getBottom());
+    // UtilityButtons, to control component buttons
+    allButton.setTopLeftPosition(background.getBounds().getBottomLeft().translated(0, 3));
+
+    int buttonWidth = buttonFont.getStringWidth(invertButton.getButtonText());
+
+    if (background.getWidth() / 3 >= buttonWidth)
+    {
+        // display buttons side-by-side
+        buttonWidth = background.getWidth() / 3 - 2;
+
+        noneButton.setTopLeftPosition(allButton.getPosition().translated(buttonWidth + 3, 0));
+        invertButton.setTopLeftPosition(noneButton.getPosition().translated(buttonWidth + 3, 0));
+    }
+    else
+    {
+        // display buttons stacked
+        buttonWidth = jmax(background.getWidth(), buttonWidth);
+
+        noneButton.setTopLeftPosition(allButton.getPosition().translated(0, unitLength + 2));
+        invertButton.setTopLeftPosition(noneButton.getPosition().translated(0, unitLength + 2));
+    }
+
+    allButton.setSize(buttonWidth, unitLength);
+    noneButton.setSize(buttonWidth, unitLength);
+    invertButton.setSize(buttonWidth, unitLength);
+
+    setSize(jmax(title.getRight(), background.getRight(), invertButton.getRight()), invertButton.getBottom());
 }
+
+void ICACanvas::ContentCanvas::ComponentSelectionArea::buttonClicked(Button* button)
+{
+    if (button == &allButton)
+    {
+        for (Button* btn : componentButtons)
+        {
+            btn->setToggleState(true, sendNotification);
+        }
+    }
+    else if (button == &noneButton)
+    {
+        for (Button* btn : componentButtons)
+        {
+            btn->setToggleState(false, sendNotification);
+        }
+    }
+    else if (button == &invertButton)
+    {
+        for (Button* btn : componentButtons)
+        {
+            btn->setToggleState(!btn->getToggleState(), sendNotification);
+        }
+    }
+}
+
 
 ICACanvas::ContentCanvas::UnmixingInfo::UnmixingInfo()
     : title     ("Unmixing title", "UNMIXING")
@@ -398,7 +488,7 @@ void ICACanvas::ContentCanvas::UnmixingInfo::update(UpdateInfo info)
     // layout
     title.setSize(jmax(matrixView.getWidth(), getNaturalWidth(title)), title.getHeight());
 
-    colourBar.setTopLeftPosition(title.getBounds().getTopRight().translated(unitLength * 3 / 2, 0));
+    colourBar.setTopLeftPosition(title.getBounds().getBottomRight().translated(unitLength * 3 / 2, -colourBarY));
     
     if (chanLabels.size() > nChans)
     {

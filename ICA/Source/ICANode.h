@@ -52,14 +52,14 @@ namespace ICA
             void resetWithSize(int numChans, int numSamps);
 
             // copy one sample of another audio buffer
-            void copySample(const AudioSampleBuffer& source, const Array<int>& channels, int sample);
+            void copySample(const AudioSampleBuffer& source, const SortedSet<int>& channels, int sample);
 
             // changes the size of the buffer while keeping as much data as possible
             void resizeKeepingData(int numSamps);
 
             // write all samples of the given channels to the given file in column-major order.
             // expects that the FIFO is already full.
-            Result writeChannelsToFile(const File& file, const Array<int>& channels);
+            Result writeChannelsToFile(const File& file, const SortedSet<int>& channels);
 
         private:
             // whether operations should be permitted
@@ -124,12 +124,12 @@ namespace ICA
     {
         Matrix mixing;
         Matrix unmixing;
-        Array<int> enabledChannels;   // of this subprocessor's channels, which to include in ica
-        Array<int> rejectedComponents;
+        SortedSet<int> enabledChannels;   // of this subprocessor's channels, which to include in ica
+        SortedSet<int> rejectedComponents;
 
         inline bool isNoop() const
         {
-            return enabledChannels.isEmpty() || rejectedComponents.isEmpty();
+            return enabledChannels.isEmpty();
         }
 
         JUCE_LEAK_DETECTOR(ICAOperation);
@@ -195,7 +195,10 @@ namespace ICA
 
         // returns null if there is no input or no real operation (i.e. operation is a no-op)
         // otherwise, returns the current operation and makes a lock in the passed-in pointer for its mutex.
-        const ICAOperation* getICAOperation(ScopedPointer<ScopedReadLock>& lock) const;
+        const ICAOperation* readICAOperation(ScopedPointer<ScopedReadLock>& lock) const;
+
+        // similar to above
+        ICAOperation* writeICAOperation(ScopedPointer<ScopedWriteLock>& lock) const;
 
         static File getICABaseDir();
 
@@ -207,7 +210,7 @@ namespace ICA
             int dsStride; // = Fs / icaTargetFs (rounded to an int)
             int dsOffset;
 
-            Array<int> channelInds; // (indices in this processor)
+            SortedSet<int> channelInds; // (indices in this processor)
 
             // for colllecting data for ICA during acquisition
             ScopedPointer<AudioBufferFifo> dataCache;
@@ -269,7 +272,7 @@ namespace ICA
         Value currICAConfigPath; // full path to .sc file
 
         // temporary storage for ICA components
-        HeapBlock<float> componentBuffer;
+        AudioSampleBuffer componentBuffer;
         
         // constants
         

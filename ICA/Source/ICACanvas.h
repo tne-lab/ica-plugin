@@ -39,8 +39,7 @@ namespace ICA
 
         void valueChanged(Value& value) override;
 
-        void buttonClicked(Button*) override {}
-        void buttonStateChanged(Button* button) override;
+        void buttonClicked(Button*) override;
 
         void refreshState() override;
         void update() override;
@@ -67,9 +66,12 @@ namespace ICA
 
             void paint(Graphics& g) override;
 
-        private:
+            // colorbrewer red/blue map
+            ColourGradient colourMap;
+
             float absMax;
 
+        private:
             JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ColourBar);
         };
 
@@ -119,10 +121,12 @@ namespace ICA
 
                 void update(UpdateInfo info);
 
-                ColourBar colourBar;
+                ColourBar matrixColourBar;
                 Label title;
                 OwnedArray<Label> chanLabels;
                 MatrixView matrixView;
+
+                ColourBar normColourBar;
                 MatrixView normView;
                 Label normLabel;
 
@@ -130,15 +134,24 @@ namespace ICA
 
             Label multiplySign1;
 
-            struct ComponentSelectionArea : public Component
+            struct ComponentSelectionArea : public Component, public Button::Listener
             {
                 ComponentSelectionArea(ICACanvas& visualizer);
 
                 void update(UpdateInfo info);
 
+                // only for the UtilityButtons
+                void buttonClicked(Button* button) override;
+
                 Label title;
-                Label selectionBox;
+                Label background;
                 OwnedArray<ElectrodeButton> componentButtons;
+
+                Font buttonFont;
+
+                UtilityButton allButton;
+                UtilityButton noneButton;
+                UtilityButton invertButton;
 
             private:
                 ICACanvas& visualizer;
@@ -166,12 +179,12 @@ namespace ICA
 
             static int getNaturalWidth(const Label& label);
 
+            static Font getLargeFont();
+            static Font getSmallFont();
+
             ICACanvas& visualizer;
 
         } canvas;
-
-        // colorbrewer red/blue map
-        static const ColourGradient colourMap;
 
         static const int colourBarY;
         static const int colourBarHeight;
