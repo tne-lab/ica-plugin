@@ -165,7 +165,7 @@ bool ICAProcess::failedToRun() const
     return nativeProcess->failed;
 }
 
-uint32 ICAProcess::getExitCode() const
+int32 ICAProcess::getExitCode() const
 {
     return nativeProcess->getExitCode();
 }

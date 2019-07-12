@@ -138,6 +138,7 @@ namespace ICA
     {
     public:
         ICANode();
+	~ICANode();
 
         bool hasEditor() const { return true; }
         AudioProcessorEditor* createEditor() override;

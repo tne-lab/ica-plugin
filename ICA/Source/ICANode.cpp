@@ -46,6 +46,14 @@ ICANode::ICANode()
     setProcessorType(PROCESSOR_TYPE_FILTER);
 }
 
+ICANode::~ICANode()
+{
+    if (isThreadRunning())
+    {
+        stopThread(500);
+    }
+}
+
 AudioProcessorEditor* ICANode::createEditor()
 {
     editor = new ICAEditor(this);
@@ -111,11 +119,6 @@ void ICANode::resetCache(uint32 subProc)
 
 bool ICANode::disable()
 {
-    if (isThreadRunning())
-    {
-        stopThread(500);
-    }
-
     // clear data caches
     for (auto& subProcEntry : subProcData)
     {
@@ -876,9 +879,15 @@ void ICANode::loadICA(const File& configFile, uint32 subProc, SortedSet<int>* re
 
 bool ICANode::tryToSetNewICAOp(ICARunInfo& info, SortedSet<int>* rejectSet)
 {
-    SubProcData& currSubProcData = subProcData[info.subProc];
-    ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
+    auto subProcEntry = subProcData.find(info.subProc);
+    if (subProcEntry == subProcData.end())
+    {
+        return false;
+    }
 
+    SubProcData& currSubProcData = subProcEntry->second;
+
+    ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
     if (!icaLock.isLocked())
     {
         return false;
@@ -1312,40 +1321,40 @@ bool AudioBufferFifo::TryLockHandle::isValid() const
 
 /**** RWLock adapters ****/
 
-RWLockReadAdapter::RWLockReadAdapter(const ReadWriteLock& lock)
+RWLockReadAdapter::RWLockReadAdapter(const ReadWriteLock& lock) noexcept
     : lock(lock)
 {}
 
-void RWLockReadAdapter::enter() const
+void RWLockReadAdapter::enter() const noexcept
 {
     lock.enterRead();
 }
 
-bool RWLockReadAdapter::tryEnter() const
+bool RWLockReadAdapter::tryEnter() const noexcept
 {
     return lock.tryEnterRead();
 }
 
-void RWLockReadAdapter::exit() const
+void RWLockReadAdapter::exit() const noexcept
 {
     lock.exitRead();
 }
 
-RWLockWriteAdapter::RWLockWriteAdapter(const ReadWriteLock& lock)
+RWLockWriteAdapter::RWLockWriteAdapter(const ReadWriteLock& lock) noexcept
     : lock(lock)
 {}
 
-void RWLockWriteAdapter::enter() const
+void RWLockWriteAdapter::enter() const noexcept
 {
     lock.enterWrite();
 }
 
-bool RWLockWriteAdapter::tryEnter() const
+bool RWLockWriteAdapter::tryEnter() const noexcept
 {
     return lock.tryEnterWrite();
 }
 
-void RWLockWriteAdapter::exit() const
+void RWLockWriteAdapter::exit() const noexcept
 {
     lock.exitWrite();
 }
