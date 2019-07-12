@@ -50,6 +50,9 @@ namespace ICA
         void startAcquisition() override;
         void stopAcquisition() override;
 
+        void saveCustomParameters(XmlElement* xml) override;
+        void loadCustomParameters(XmlElement* xml) override;
+
     private:
 
         // (utility functions copied from PhaseCalculator)

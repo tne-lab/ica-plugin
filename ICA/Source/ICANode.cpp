@@ -62,19 +62,30 @@ bool ICANode::startICA()
     return true;
 }
 
-void ICANode::resetICA(uint32 subproc)
+void ICANode::resetICA(uint32 subproc, bool block)
 {
     auto dataEntry = subProcData.find(subproc);
     if (dataEntry != subProcData.end())
     {
         SubProcData& data = dataEntry->second;
-        const ScopedWriteTryLock icaLock(data.icaMutex);
-        if (!icaLock.isLocked())
+
+        ScopedPointer<ScopedWriteLock> blockingLock;
+        ScopedPointer<ScopedWriteTryLock> tryLock;
+
+        if (block)
         {
-            // uh-oh, if it's being written to now, we don't want to
-            // throw the new thing away
-            // bail out
-            return;
+            blockingLock = new ScopedWriteLock(data.icaMutex);
+        }
+        else
+        {
+            tryLock = new ScopedWriteTryLock(data.icaMutex);
+            if (!tryLock->isLocked())
+            {
+                // uh-oh, if it's being written to now, we don't want to
+                // throw the new thing away
+                // bail out
+                return;
+            }
         }
 
         data.icaOp = new ICAOperation();
@@ -84,23 +95,7 @@ void ICANode::resetICA(uint32 subproc)
 
 void ICANode::loadICA(const File& configFile)
 {
-    // populate a new ICARunInfo struct
-    ICARunInfo loadedInfo;
-    loadedInfo.op = new ICAOperation();
-    loadedInfo.config = configFile;
-    loadedInfo.subProc = currSubProc;
-
-    Result res = populateInfoFromConfig(loadedInfo);
-    if (res.failed())
-    {
-        CoreServices::sendStatusMessage("ICA load failed: " + res.getErrorMessage());
-        return;
-    }
-
-    while (!tryToSetNewICAOp(loadedInfo))
-    {
-        Thread::sleep(100);
-    }
+    loadICA(configFile, currSubProc);
 }
 
 bool ICANode::disable()
@@ -339,6 +334,78 @@ void ICANode::updateSettings()
 
     // ensure space for maximum # of components
     componentBuffer.setSize(maxSubProcChans, componentBuffer.getNumSamples());
+}
+
+
+void ICANode::saveCustomParametersToXml(XmlElement* parentElement)
+{
+    for (const auto& subProcEntry : subProcData)
+    {
+        uint32 subProc = subProcEntry.first;
+        const SubProcData& data = subProcEntry.second;
+
+        const ScopedReadLock icaLock(data.icaMutex);
+        if (data.icaOp && !data.icaOp->isNoop())
+        {
+            XmlElement* opNode = parentElement->createNewChildElement("ICA_OP");
+            opNode->setAttribute("subproc", int(subProc));
+            opNode->setAttribute("configFile", data.icaConfigPath.toString());
+
+            String rejectedComps = "";
+            for (int comp : data.icaOp->rejectedComponents)
+            {
+                rejectedComps = rejectedComps + String(comp) + " ";
+            }
+            opNode->setAttribute("reject", rejectedComps);
+        }
+    }
+}
+
+void ICANode::loadCustomParametersFromXml()
+{
+    if (parametersAsXml != nullptr)
+    {
+        // first collect operations to load...then we'll iterate over all the subprocs
+        std::map<uint32, std::pair<String, SortedSet<int>>> newOps;
+
+        forEachXmlChildElementWithTagName(*parametersAsXml, opNode, "ICA_OP")
+        {
+            uint32 subProc = opNode->getIntAttribute("subproc");
+            if (subProc == 0) { continue; }
+
+            String configFile = opNode->getStringAttribute("configFile");
+            if (configFile.isEmpty()) { continue; }
+
+            String rejectedComps = opNode->getStringAttribute("reject");
+            SortedSet<int> rejectSet;
+
+            auto rejectStrings = StringArray::fromTokens(rejectedComps, false);
+            for (const String& str : rejectStrings)
+            {
+                rejectSet.add(str.getIntValue());
+            }
+
+            newOps.emplace(subProc, std::make_pair(std::move(configFile), std::move(rejectSet)));
+        }
+        
+        // each subproc should either load in an ICA operation or be reset.
+        for (const auto& subProcEntry : subProcData)
+        {
+            uint32 subProc = subProcEntry.first;
+
+            auto newOp = newOps.find(subProc);
+            if (newOp != newOps.end())
+            {
+                File configFile = newOp->second.first;
+                SortedSet<int>* rejectSet = &newOp->second.second;
+                loadICA(configFile, subProc, rejectSet);
+            }
+            else
+            {
+                resetICA(subProc, true);
+            }
+        }
+    }
 }
 
 
@@ -782,7 +849,29 @@ Result ICANode::processResults(ICARunInfo& info)
 }
 
 
-bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
+void ICANode::loadICA(const File& configFile, uint32 subProc, SortedSet<int>* rejectSet)
+{
+    // populate a new ICARunInfo struct
+    ICARunInfo loadedInfo;
+    loadedInfo.op = new ICAOperation();
+    loadedInfo.config = configFile;
+    loadedInfo.subProc = subProc;
+
+    Result res = populateInfoFromConfig(loadedInfo);
+    if (res.failed())
+    {
+        CoreServices::sendStatusMessage("ICA load failed: " + res.getErrorMessage());
+        return;
+    }
+
+    while (!tryToSetNewICAOp(loadedInfo, rejectSet))
+    {
+        Thread::sleep(100);
+    }
+}
+
+
+bool ICANode::tryToSetNewICAOp(ICARunInfo& info, SortedSet<int>* rejectSet)
 {
     SubProcData& currSubProcData = subProcData[info.subProc];
     ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
@@ -792,17 +881,34 @@ bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
         return false;
     }
 
+    ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
+
     // reject first component by default
     info.op->rejectedComponents.add(0);
 
-    // see if we can reuse an existing "components" array
-    // this is only allowed if this subprocessor has an existing ICA transformation
-    // and it is based on the same channels.
-    ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
-    if (oldOp->enabledChannels == info.op->enabledChannels)
+    if (rejectSet)
     {
-        // take old op's components
-        info.op->rejectedComponents.swapWith(oldOp->rejectedComponents);
+        // use passed-in components to reject, as long as it works with the actual number of components
+        if (rejectSet->getLast() < info.op->enabledChannels.size())
+        {
+            info.op->rejectedComponents.swapWith(*rejectSet);
+        }
+        else
+        {
+            std::cerr << "Warning: rejected component set in loaded ICA op names nonexistent components" << std::endl;
+            std::cerr << "Defaulting to rejecting first component" << std::endl;
+        }
+    }
+    else
+    {
+        // see if we can reuse an existing "components" array
+        // this is only allowed if this subprocessor has an existing ICA transformation
+        // and it is based on the same channels.
+        if (oldOp->enabledChannels == info.op->enabledChannels)
+        {
+            // take old op's components
+            info.op->rejectedComponents.swapWith(oldOp->rejectedComponents);
+        }
     }
 
     oldOp.swapWith(info.op);
@@ -810,6 +916,7 @@ bool ICANode::tryToSetNewICAOp(ICARunInfo& info)
 
     return true;
 }
+
 
 Result ICANode::populateInfoFromConfig(ICARunInfo& info)
 {

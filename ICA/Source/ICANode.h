@@ -147,7 +147,7 @@ namespace ICA
         bool startICA();
 
         // replace any current ICA transformation with a dummy one that does nothing
-        void resetICA(uint32 subproc);
+        void resetICA(uint32 subproc, bool block = false);
 
         void loadICA(const File& configFile);
 
@@ -163,12 +163,9 @@ namespace ICA
         // Thread function - does an ICA run.
         void run() override;
 
-        // TODO
-        /** Saving custom settings to XML. */
-        //void saveCustomParametersToXml(XmlElement* parentElement) override;
+        void saveCustomParametersToXml(XmlElement* parentElement) override;
 
-        /** Load custom settings from XML*/
-        //void loadCustomParametersFromXml() override;
+        void loadCustomParametersFromXml() override;
 
         // access stuff
 
@@ -245,9 +242,14 @@ namespace ICA
         // To report an error during an ICA run
         void reportError(const String& whatHappened);
 
+        // Load ICA for a specific subprocessor.
+        // If rejectSet is non-null, it will be *swapped* into the resulting operation's
+        // rejected components, if possible.
+        void loadICA(const File& configFile, uint32 subProc, SortedSet<int>* rejectSet = nullptr);
+
         // Returns false if unable to acquire the lock
         // does not have to be run in the thread
-        bool tryToSetNewICAOp(ICARunInfo& info);
+        bool tryToSetNewICAOp(ICARunInfo& info, SortedSet<int>* rejectSet = nullptr);
 
         // For use when loading data. Uses config file to fill in
         // other information (including the transformation itself)

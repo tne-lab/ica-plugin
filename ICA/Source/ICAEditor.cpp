@@ -238,3 +238,33 @@ void ICAEditor::stopAcquisition()
 {
     startButton.setEnabled(false);
 }
+
+
+void ICAEditor::saveCustomParameters(XmlElement* xml)
+{
+    VisualizerEditor::saveCustomParameters(xml);
+
+    xml->setAttribute("Type", "ICAEditor");
+
+    XmlElement* stateNode = xml->createNewChildElement("STATE");
+    stateNode->setAttribute("subproc", subProcComboBox.getSelectedId());
+    stateNode->setAttribute("trainLength", durationTextBox.getText());
+    stateNode->setAttribute("suffix", dirSuffixTextBox.getText());
+}
+
+void ICAEditor::loadCustomParameters(XmlElement* xml)
+{
+    VisualizerEditor::loadCustomParameters(xml);
+
+    forEachXmlChildElementWithTagName(*xml, stateNode, "STATE")
+    {
+        uint32 subProc = stateNode->getIntAttribute("subproc");
+        if (subProc)
+        {
+            subProcComboBox.setSelectedId(subProc);
+        }
+
+        durationTextBox.setText(stateNode->getStringAttribute("trainLength", durationTextBox.getText()), sendNotification);
+        dirSuffixTextBox.setText(stateNode->getStringAttribute("suffix", dirSuffixTextBox.getText()), sendNotification);
+    }
+}
