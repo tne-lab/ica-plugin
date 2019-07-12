@@ -1319,42 +1319,41 @@ bool AudioBufferFifo::TryLockHandle::isValid() const
 }
 
 
-/**** RWLock adapters ****/
+/**** ScopedTryLocks for ReadWriteLocks ****/
 
-RWLockReadAdapter::RWLockReadAdapter(const ReadWriteLock& lock) noexcept
-    : lock(lock)
+ScopedReadTryLock::ScopedReadTryLock(const ReadWriteLock& lock) noexcept
+    : lock_             (lock)
+    , lockWasSuccessful (lock.tryEnterRead())
 {}
 
-void RWLockReadAdapter::enter() const noexcept
+ScopedReadTryLock::~ScopedReadTryLock() noexcept
 {
-    lock.enterRead();
+    if (lockWasSuccessful)
+    {
+        lock_.exitRead();
+    }
 }
 
-bool RWLockReadAdapter::tryEnter() const noexcept
+bool ScopedReadTryLock::isLocked() const noexcept
 {
-    return lock.tryEnterRead();
+    return lockWasSuccessful;
 }
 
-void RWLockReadAdapter::exit() const noexcept
-{
-    lock.exitRead();
-}
 
-RWLockWriteAdapter::RWLockWriteAdapter(const ReadWriteLock& lock) noexcept
-    : lock(lock)
+ScopedWriteTryLock::ScopedWriteTryLock(const ReadWriteLock& lock) noexcept
+    : lock_             (lock)
+    , lockWasSuccessful (lock.tryEnterWrite())
 {}
 
-void RWLockWriteAdapter::enter() const noexcept
+ScopedWriteTryLock::~ScopedWriteTryLock() noexcept
 {
-    lock.enterWrite();
+    if (lockWasSuccessful)
+    {
+        lock_.exitWrite();
+    }
 }
 
-bool RWLockWriteAdapter::tryEnter() const noexcept
+bool ScopedWriteTryLock::isLocked() const noexcept
 {
-    return lock.tryEnterWrite();
-}
-
-void RWLockWriteAdapter::exit() const noexcept
-{
-    lock.exitWrite();
+    return lockWasSuccessful;
 }

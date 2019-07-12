@@ -330,32 +330,37 @@ namespace ICA
 
 
     // not sure why this doesn't already exist
-    class RWLockReadAdapter
+    // see: juce::GenericScopedTryLock
+
+    class ScopedReadTryLock
     {
     public:
-        RWLockReadAdapter(const ReadWriteLock& lock) noexcept;
-        void enter() const noexcept;
-        bool tryEnter() const noexcept;
-        void exit() const noexcept;
+        explicit ScopedReadTryLock(const ReadWriteLock& lock) noexcept;
+        ~ScopedReadTryLock() noexcept;
+
+        bool isLocked() const noexcept;
 
     private:
-        const ReadWriteLock& lock;
+        const ReadWriteLock& lock_;
+        const bool lockWasSuccessful;
+
+        JUCE_DECLARE_NON_COPYABLE(ScopedReadTryLock);
     };
 
-    class RWLockWriteAdapter
+    class ScopedWriteTryLock
     {
     public:
-        RWLockWriteAdapter(const ReadWriteLock& lock) noexcept;
-        void enter() const noexcept;
-        bool tryEnter() const noexcept;
-        void exit() const noexcept;
+        explicit ScopedWriteTryLock(const ReadWriteLock& lock) noexcept;
+        ~ScopedWriteTryLock() noexcept;
+
+        bool isLocked() const noexcept;
 
     private:
-        const ReadWriteLock& lock;
-    };
+        const ReadWriteLock& lock_;
+        const bool lockWasSuccessful;
 
-    using ScopedReadTryLock = GenericScopedTryLock<RWLockReadAdapter>;
-    using ScopedWriteTryLock = GenericScopedTryLock<RWLockWriteAdapter>;
+        JUCE_DECLARE_NON_COPYABLE(ScopedWriteTryLock);
+    };
 }
 
 #endif // ICA_NODE_H_DEFINED
