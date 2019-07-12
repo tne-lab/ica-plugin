@@ -21,7 +21,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <ProcessorHeaders.h>
 
 #include <map>
-#include <atomic>
 #include <Eigen/Dense>
 
 namespace ICA
@@ -40,7 +39,6 @@ namespace ICA
         int getNumSamples() const;
 
         const Value& getPctFull() const;
-        bool isFull() const;
 
         class Handle
         {
@@ -48,6 +46,8 @@ namespace ICA
             Handle(AudioBufferFifo& fifoIn);
 
         public:
+            bool isFull() const;
+
             void reset();
             void resetWithSize(int numChans, int numSamps);
 
@@ -95,8 +95,7 @@ namespace ICA
 
         int startPoint;
         int numWritten;
-        Value pctFull; // for display - nearest int
-        std::atomic<bool> full;
+        Value pctFull; // for display - rounded down to int
         
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBufferFifo);
     };
@@ -135,7 +134,7 @@ namespace ICA
         JUCE_LEAK_DETECTOR(ICAOperation);
     };
 
-    class ICANode : public GenericProcessor, public ThreadWithProgressWindow
+    class ICANode : public GenericProcessor, public Thread
     {
     public:
         ICANode();
@@ -147,9 +146,12 @@ namespace ICA
         bool startICA();
 
         // replace any current ICA transformation with a dummy one that does nothing
-        void resetICA(uint32 subproc, bool block = false);
+        void resetICA(uint32 subProc, bool block = false);
 
         void loadICA(const File& configFile);
+
+        // clear the data cache for this subproc and start over at 0%
+        void resetCache(uint32 subProc);
 
         // not used currently:
         //bool enable() override;
@@ -184,11 +186,14 @@ namespace ICA
         // returns null if no current subproc
         const StringArray* getCurrSubProcChannelNames() const;
 
-        // for editor indicator
-        const Value& getPctFullValue() const;
+        // also returns a reference to the value, so it can be identified in the callback.
+        const Value& addPctFullListener(Value::Listener* listener);
 
         // also returns a reference to the value, so it can be identified in the callback.
         const Value& addConfigPathListener(Value::Listener* listener);
+
+        // same deal
+        const Value& addICARunningListener(Value::Listener* listener);
 
         // returns null if there is no input or no real operation (i.e. operation is a no-op)
         // otherwise, returns the current operation and makes a lock in the passed-in pointer for its mutex.
@@ -229,18 +234,17 @@ namespace ICA
             ScopedPointer<ICAOperation> op;
         };
 
-        // Collect data from the process thread and write to a file.
-        // Returns # of samples written, or 0 on failure
+        // Populate the info struct
         Result prepareICA(ICARunInfo& info);
+
+        // Write data for ICA to input.floatdata file
+        Result writeCacheData(ICARunInfo& info);
 
         // Call the binica executable on our sample data
         Result performICA(ICARunInfo& info);
 
         // Read in output from binica and compute fields of ICAOutput
         Result processResults(ICARunInfo& info);
-
-        // To report an error during an ICA run
-        void reportError(const String& whatHappened);
 
         // Load ICA for a specific subprocessor.
         // If rejectSet is non-null, it will be *swapped* into the resulting operation's
@@ -272,19 +276,17 @@ namespace ICA
         // relevant to state of editor and canvas
         uint32 currSubProc;      // full source ID of selected subproc
         Value currICAConfigPath; // full path to .sc file
+        Value currPctFull;
+        Value icaRunning;
 
         // temporary storage for ICA components
         AudioSampleBuffer componentBuffer;
         
+
         // constants
-        
+
+        // frequency at which samples are taken for ICA
         static const float icaTargetFs;
-
-        // what is shown on the editor when there is no subprocessor (no inputs)
-
-        // static Values cause "leaked object" assertions for some reason...
-        const Value noInputVal  { var("no input)") };
-        const Value emptyVal    { var("") };
 
         static const String inputFilename;
         static const String configFilename;

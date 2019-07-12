@@ -25,7 +25,7 @@ using namespace ICA;
 const int ICACanvas::colourBarY = 20;
 const int ICACanvas::colourBarHeight = 150;
 
-const int ICACanvas::unitLength = 24;
+const int ICACanvas::unitLength = 20;
 
 ICACanvas::ICACanvas(ICANode& proc)
     : node              (proc)

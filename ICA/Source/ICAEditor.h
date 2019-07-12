@@ -47,9 +47,6 @@ namespace ICA
 
         void updateSettings() override;
 
-        void startAcquisition() override;
-        void stopAcquisition() override;
-
         void saveCustomParameters(XmlElement* xml) override;
         void loadCustomParameters(XmlElement* xml) override;
 
@@ -99,16 +96,24 @@ namespace ICA
 
         Label durationLabel;
         Label durationTextBox;
+        Label durationUnit;
         static const String durationTooltip;
 
-        Label collectedLabel;
         Label collectedIndicator;
+
+        // visible in place of collectedIndicator when the buffer is full
+        UtilityButton startButton;
+
+        // visible while ICA is running
+        Label runningIndicator;
 
         Label dirSuffixLabel;
         Label dirSuffixTextBox;
         static const String dirSuffixTooltip;
 
-        UtilityButton startButton;
+        // to reset the buffer
+        UtilityButton resetButton;
+        static const String resetTooltip;
 
         Label currICAIndicator;
         UtilityButton clearButton;
@@ -116,6 +121,8 @@ namespace ICA
         LoadButton loadButton;
 
         const Value& configPathVal;
+        const Value& pctFullVal;
+        const Value& icaRunningVal;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ICAEditor);
     };

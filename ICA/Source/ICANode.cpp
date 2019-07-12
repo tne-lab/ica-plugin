@@ -36,11 +36,12 @@ const String ICANode::mixingFilename("output.mix");
 const String ICANode::unmixingFilename("output.unmix");
 
 ICANode::ICANode()
-    : GenericProcessor          ("ICA")
-    , ThreadWithProgressWindow  ("ICA Computation", true, true)
-    , icaSamples                (int(icaTargetFs * 240))
-    , componentBuffer           (16, 1024)
-    , currSubProc               (0)
+    : GenericProcessor  ("ICA")
+    , Thread            ("ICA Computation")
+    , icaSamples        (int(icaTargetFs * 240))
+    , componentBuffer   (16, 1024)
+    , currSubProc       (0)
+    , icaRunning        (var(false))
 {
     setProcessorType(PROCESSOR_TYPE_FILTER);
 }
@@ -58,13 +59,13 @@ bool ICANode::startICA()
         return false;
     }
 
-    launchThread();
+    startThread();
     return true;
 }
 
-void ICANode::resetICA(uint32 subproc, bool block)
+void ICANode::resetICA(uint32 subProc, bool block)
 {
-    auto dataEntry = subProcData.find(subproc);
+    auto dataEntry = subProcData.find(subProc);
     if (dataEntry != subProcData.end())
     {
         SubProcData& data = dataEntry->second;
@@ -96,6 +97,16 @@ void ICANode::resetICA(uint32 subproc, bool block)
 void ICANode::loadICA(const File& configFile)
 {
     loadICA(configFile, currSubProc);
+}
+
+void ICANode::resetCache(uint32 subProc)
+{
+    auto dataEntry = subProcData.find(subProc);
+    if (dataEntry != subProcData.end())
+    {
+        AudioBufferFifo::LockHandle bufHandle(*dataEntry->second.dataCache);
+        bufHandle.reset();
+    }
 }
 
 bool ICANode::disable()
@@ -325,11 +336,13 @@ void ICANode::updateSettings()
     if (currSubProc == 0)
     {
         currICAConfigPath = "";
+        currPctFull = 0;
     }
     else
     {
         SubProcData& data = subProcData[currSubProc];
         currICAConfigPath.referTo(data.icaConfigPath);
+        currPctFull.referTo(data.dataCache->getPctFull());
     }
 
     // ensure space for maximum # of components
@@ -460,7 +473,8 @@ void ICANode::setCurrSubProc(uint32 fullId)
     if (fullId == 0)
     {
         currSubProc = fullId;
-        currICAConfigPath.referTo(emptyVal);
+        currICAConfigPath = "";
+        currPctFull = 0;
     }
     else
     {
@@ -472,6 +486,7 @@ void ICANode::setCurrSubProc(uint32 fullId)
         }
         currSubProc = fullId;
         currICAConfigPath.referTo(newSubProcData->second.icaConfigPath);
+        currPctFull.referTo(newSubProcData->second.dataCache->getPctFull());
     }
 }
 
@@ -487,17 +502,14 @@ const StringArray* ICANode::getCurrSubProcChannelNames() const
 }
 
 
-const Value& ICANode::getPctFullValue() const
+const Value& ICANode::addPctFullListener(Value::Listener* listener)
 {
-    auto subProcEntry = subProcData.find(currSubProc);
-    if (subProcEntry == subProcData.end())
+    if (listener)
     {
-        return noInputVal;
+        currPctFull.addListener(listener);
     }
-
-    return subProcEntry->second.dataCache->getPctFull();
+    return currPctFull;
 }
-
 
 const Value& ICANode::addConfigPathListener(Value::Listener* listener)
 {
@@ -506,6 +518,15 @@ const Value& ICANode::addConfigPathListener(Value::Listener* listener)
         currICAConfigPath.addListener(listener);
     }
     return currICAConfigPath;
+}
+
+const Value& ICANode::addICARunningListener(Value::Listener* listener)
+{
+    if (listener)
+    {
+        icaRunning.addListener(listener);
+    }
+    return icaRunning;
 }
 
 
@@ -562,10 +583,42 @@ File ICANode::getICABaseDir()
 
 void ICANode::run()
 {
-    setStatusMessage("Preparing...");
+    icaRunning = true;
 
-    ICARunInfo info;
+    ICARunInfo info;       
 
+    for (auto subroutine :
+    { 
+            &ICANode::prepareICA,
+            &ICANode::writeCacheData,
+            &ICANode::performICA,
+            &ICANode::processResults
+    })
+    {
+        Result res = (this->*subroutine)(info);
+        if (threadShouldExit())
+        {
+            icaRunning = false;
+            return;
+        }
+        else if (res.failed())
+        {
+            CoreServices::sendStatusMessage("ICA failed: " + res.getErrorMessage());
+            icaRunning = false;
+            return;
+        }
+    }
+
+    while (!threadShouldExit() && !tryToSetNewICAOp(info))
+    {
+        wait(100);
+    }
+
+    icaRunning = false;    
+}
+
+Result ICANode::prepareICA(ICARunInfo& info)
+{
     info.op = new ICAOperation();
 
     // collect current settings
@@ -574,8 +627,7 @@ void ICANode::run()
 
     if (info.subProc == 0)
     {
-        reportError("No subprocessor selected");
-        return;
+        return Result::fail("No subprocessor selected");
     }
 
     // enabled channels = which channels of current subprocessor are enabled
@@ -596,8 +648,7 @@ void ICANode::run()
 
     if (info.op->enabledChannels.size() < 2)
     {
-        reportError("At least 2 channels must be enabled to run ICA");
-        return;
+        return Result::fail("At least 2 channels must be enabled to run ICA");
     }
 
     info.nChannels = info.op->enabledChannels.size();
@@ -608,7 +659,7 @@ void ICANode::run()
     // create a subdirectory for files, which we want to make sure doesn't exist yet
     while (true)
     {
-        if (threadShouldExit()) { return; }
+        if (threadShouldExit()) { return Result::ok(); }
 
         String time = Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M-%S");
         File outDir = baseDir.getChildFile("ICA_" + time + icaDirSuffix);
@@ -617,9 +668,8 @@ void ICANode::run()
             Result res = outDir.createDirectory();
             if (res.failed())
             {
-                reportError("Failed to make output directory ("
+                return Result::fail("Failed to make output directory ("
                     + res.getErrorMessage().trimEnd() + ")");
-                return;
             }
 
             info.config = outDir.getChildFile(configFilename);
@@ -627,95 +677,54 @@ void ICANode::run()
         }
     }
 
-    using ICASubFunc = Result(ICANode::*)(ICARunInfo&);
-    for (ICASubFunc sub : { &ICANode::prepareICA, &ICANode::performICA, &ICANode::processResults })
-    {
-        Result res = (this->*sub)(info);
-        if (threadShouldExit())
-        {
-            return;
-        }
-        else if (res.failed())
-        {
-            reportError(res.getErrorMessage());
-            return;
-        }
-    }
-
-    while (!threadShouldExit() && !tryToSetNewICAOp(info))
-    {
-        wait(100);
-    }
+    return Result::ok();
 }
 
-Result ICANode::prepareICA(ICARunInfo& info)
+Result ICANode::writeCacheData(ICARunInfo& info)
 {
-    setStatusMessage("Collecting data for ICA...");
-    setProgress(0.0);
-
     AudioBufferFifo& dataCache = *subProcData[info.subProc].dataCache;
 
     File icaDir = info.config.getParentDirectory();
     File inputFile = icaDir.getChildFile(inputFilename);
 
-    int nWritten = 0;
-    bool written = false;
-    while (!written)
+    while (true)
     {
-        // wait for cache to fill up
-        while (!dataCache.isFull())
+        if (threadShouldExit()) { return Result::ok(); }
+
+        // shouldn't be contentious since the cache is supposedly full,
+        // but avoid blocking with a try lock just in case
+        AudioBufferFifo::TryLockHandle hData(dataCache);
+        if (!hData.isLocked())
         {
-            if (threadShouldExit()) { return Result::ok(); }
-
-            setProgress(double(dataCache.getPctFull().getValue()) / 100.0);
-
             wait(100);
+            continue;
         }
 
-        while (!written)
+        // ok, we have the lock. so is the buffer really full or did the
+        // length get increased at the last minute?
+        if (!hData.isFull())
         {
-            if (threadShouldExit()) { return Result::ok(); }
+            // (unlikely)
+            return Result::fail("Data cache not full yet");
+        }
 
-            // shouldn't be contentious since the cache is supposedly full,
-            // but avoid blocking with a try lock just in case
-            AudioBufferFifo::TryLockHandle hData(dataCache);
-            if (!hData.isLocked())
-            {
-                wait(100);
-                continue;
-            }
-
-            // ok, we have the lock. so is the buffer really full or did the
-            // length get increased at the last minute?
-            if (!dataCache.isFull())
-            {
-                // start over on waiting for it to fill up
-                break;
-            }
-
-            // alright, it's really full, we can write it out
-            Result writeRes = hData.writeChannelsToFile(inputFile, info.op->enabledChannels);
-            if (writeRes.wasOk())
-            {
-                written = true;
-                info.nSamples = dataCache.getNumSamples();
-            }
-            else
-            {
-                return Result::fail("Failed to write data to input file ("
-                    + writeRes.getErrorMessage().trimEnd() + ")");
-            }
+        // alright, it's really full, we can write it out
+        Result writeRes = hData.writeChannelsToFile(inputFile, info.op->enabledChannels);
+        if (writeRes.wasOk())
+        {
+            info.nSamples = dataCache.getNumSamples();
+            return Result::ok();
+        }
+        else
+        {
+            return Result::fail("Failed to write data to input file ("
+                + writeRes.getErrorMessage().trimEnd() + ")");
         }
     }
-
-    setProgress(1.0);
-    return Result::ok();
 }
 
 Result ICANode::performICA(ICARunInfo& info)
 {
-    setStatusMessage("Running ICA...");
-
     // Write config file. For now, not configurable, but maybe can be in the future.
 
     { // scope in which configStream exists
@@ -782,12 +791,6 @@ Result ICANode::performICA(ICARunInfo& info)
 
 Result ICANode::processResults(ICARunInfo& info)
 {
-    const bool inThread = (Thread::getCurrentThreadId() == getThreadId());
-    if (inThread)
-    {
-        setStatusMessage("Processing ICA results...");
-    }
-
     if (info.op->unmixing.size() == 0) // skip this if we already have an unmixing matrix
     {
         // load weight and sphere matrices into Eigen Map objects
@@ -802,7 +805,7 @@ Result ICANode::processResults(ICARunInfo& info)
             return res;
         }
 
-        if (inThread && threadShouldExit()) { return Result::ok(); }
+        if (currentThreadShouldExit()) { return Result::ok(); }
 
         HeapBlock<float> sphereBlock(sizeSq);
 
@@ -812,7 +815,7 @@ Result ICANode::processResults(ICARunInfo& info)
             return res;
         }
 
-        if (inThread && threadShouldExit()) { return Result::ok(); }
+        if (currentThreadShouldExit()) { return Result::ok(); }
 
         MatrixMap weights(weightBlock.getData(), size, size);
         MatrixMap sphere(sphereBlock.getData(), size, size);
@@ -828,7 +831,7 @@ Result ICANode::processResults(ICARunInfo& info)
 
     info.op->mixing = info.op->unmixing.inverse();
 
-    if (inThread && threadShouldExit()) { return Result::ok(); }
+    if (currentThreadShouldExit()) { return Result::ok(); }
 
     // write final matrices to output files
     File icaDir = info.config.getParentDirectory();
@@ -1092,13 +1095,6 @@ Result ICANode::saveMatrix(const File& dest, const MatrixRef& mat)
     return Result::ok();
 }
 
-void ICANode::reportError(const String& whatHappened)
-{
-    setStatusMessage("Error: " + whatHappened);
-    CoreServices::sendStatusMessage("ICA failed: " + whatHappened);
-    wait(5000);
-}
-
 
 /**** SubProcInfo ****/
 
@@ -1117,7 +1113,6 @@ SubProcInfo::operator String() const
 
 AudioBufferFifo::AudioBufferFifo(int numChans, int numSamps)
     : data(new AudioSampleBuffer(numChans, numSamps))
-    , full(false)
 {
     reset();
 }
@@ -1132,25 +1127,17 @@ const Value& AudioBufferFifo::getPctFull() const
     return pctFull;
 }
 
-bool AudioBufferFifo::isFull() const
-{
-    return full.load(std::memory_order_acquire);
-}
-
 void AudioBufferFifo::updateFullStatus()
 {
     int numSamps = data->getNumSamples();
-    full.store(numWritten == numSamps, std::memory_order_release);
-    int pctFullInt = numSamps == 0 ? 100 : int(100.0 * numWritten / numSamps + 0.5);
-    pctFull = String(pctFullInt) + "% full)";
+    pctFull = numSamps == 0 ? 0 : int(100 * (double(numWritten) / numSamps));
 }
 
 void AudioBufferFifo::reset()
 {
     startPoint = 0;
     numWritten = 0;
-    pctFull = "0% full)";
-    full = false;
+    pctFull = 0;
 }
 
 
@@ -1159,6 +1146,13 @@ void AudioBufferFifo::reset()
 AudioBufferFifo::Handle::Handle(AudioBufferFifo& fifoIn)
     : fifo(fifoIn)
 {}
+
+bool AudioBufferFifo::Handle::isFull() const
+{
+    if (!isValid()) { return false; }
+
+    return fifo.numWritten > 0 && fifo.numWritten == fifo.data->getNumSamples();
+}
 
 void AudioBufferFifo::Handle::reset()
 {
@@ -1267,7 +1261,7 @@ Result AudioBufferFifo::Handle::writeChannelsToFile(const File& file, const Sort
         return stream.getStatus();
     }
 
-    jassert(fifo.full.load(std::memory_order_acquire)); // should only be called when the FIFO is full...
+    jassert(isFull()); // should only be called when the FIFO is full...
 
     int numChans = fifo.data->getNumChannels();
     int numSamps = fifo.data->getNumSamples();
@@ -1301,13 +1295,13 @@ bool AudioBufferFifo::Handle::isValid() const
 
 
 AudioBufferFifo::LockHandle::LockHandle(AudioBufferFifo& fifoIn)
-    : Handle({ fifoIn })
-    , ScopedLock(fifoIn.mutex)
+    : Handle        (fifoIn)
+    , ScopedLock    (fifoIn.mutex)
 {}
 
 AudioBufferFifo::TryLockHandle::TryLockHandle(AudioBufferFifo& fifoIn)
-    : Handle({ fifoIn })
-    , ScopedTryLock(fifoIn.mutex)
+    : Handle        (fifoIn)
+    , ScopedTryLock (fifoIn.mutex)
 {}
 
 bool AudioBufferFifo::TryLockHandle::isValid() const

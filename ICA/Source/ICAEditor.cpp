@@ -35,20 +35,27 @@ const String ICAEditor::dirSuffixTooltip("Output of the ICA run will be saved"
     " to a directory 'ICA_<timestamp>_<suffix>' within either the Open Ephys"
     " executable folder or, if a recording is active, the recording folder.");
 
+const String ICAEditor::resetTooltip("Reset cache; a new run will only use data"
+    " from after the reset.");
+
 ICAEditor::ICAEditor(ICANode* parentNode)
     : VisualizerEditor  (parentNode, 220, false)
     , subProcLabel      ("subProcLabel", "Input:")
     , subProcComboBox   ("subProcComboBox")
     , durationLabel     ("durationLabel", "Train for")
     , durationTextBox   ("durationTextBox", String(parentNode->getTrainDurationSec()))
-    , collectedLabel    ("collectedLabel", "s   (")
+    , durationUnit      ("durationUnit", "s")
     , collectedIndicator("collectedIndicator", "")
+    , startButton       ("START", Font("Default", 12, Font::plain))
+    , runningIndicator  ("runningIndicator", "Running...")
     , dirSuffixLabel    ("dirSuffixLabel", "Suffix:")
     , dirSuffixTextBox  ("dirSuffixTextBox", parentNode->getDirSuffix())
-    , startButton       ("START", Font("Default", 12, Font::plain))
+    , resetButton       ("RESET", Font("Default", 12, Font::plain))
     , currICAIndicator  ("currICAIndicator", "")
     , clearButton       ("X", Font("Default", 12, Font::plain))
     , configPathVal     (parentNode->addConfigPathListener(this))
+    , pctFullVal        (parentNode->addPctFullListener(this))
+    , icaRunningVal     (parentNode->addICARunningListener(this))
 {
     tabText = "ICA";
 
@@ -76,14 +83,23 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     durationTextBox.setTooltip(durationTooltip);
     addAndMakeVisible(durationTextBox);
 
-    collectedLabel.setBounds(110, 55, 30, 20);
-    collectedLabel.setTooltip(durationTooltip);
-    addAndMakeVisible(collectedLabel);
+    durationUnit.setBounds(110, 55, 20, 20);
+    durationUnit.setTooltip(durationTooltip);
+    addAndMakeVisible(durationUnit);
 
     collectedIndicator.setBounds(130, 55, 80, 20);
-    collectedIndicator.getTextValue().referTo(parentNode->getPctFullValue());
     collectedIndicator.setTooltip(durationTooltip);
     addAndMakeVisible(collectedIndicator);
+
+    startButton.setBounds(130, 55, 60, 20);
+    startButton.addListener(this);
+    addChildComponent(startButton);
+
+    runningIndicator.setBounds(130, 55, 70, 20);
+    runningIndicator.setAlwaysOnTop(true);
+    runningIndicator.setColour(Label::backgroundColourId, getBackgroundGradient().getColourAtPosition(0.5));
+    runningIndicator.setOpaque(true);
+    addChildComponent(runningIndicator);
 
     dirSuffixLabel.setBounds(10, 80, 50, 20);
     dirSuffixLabel.setTooltip(dirSuffixTooltip);
@@ -97,10 +113,10 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     dirSuffixTextBox.setTooltip(dirSuffixTooltip);
     addAndMakeVisible(dirSuffixTextBox);
 
-    startButton.setBounds(130, 80, 50, 20);
-    startButton.addListener(this);
-    startButton.setEnabled(CoreServices::getAcquisitionStatus());
-    addAndMakeVisible(startButton);
+    resetButton.setBounds(130, 80, 60, 20);
+    resetButton.addListener(this);
+    resetButton.setTooltip(resetTooltip);
+    addAndMakeVisible(resetButton);
     
     currICAIndicator.setBounds(10, 105, 175, 20);
     addAndMakeVisible(currICAIndicator);
@@ -163,9 +179,6 @@ void ICAEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
     if (comboBoxThatHasChanged == &subProcComboBox)
     {
         icaNode->setCurrSubProc(comboBoxThatHasChanged->getSelectedId());
-
-        // update indicators
-        collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
     }
 }
 
@@ -177,6 +190,10 @@ void ICAEditor::buttonEvent(Button* button)
     if (button == &startButton)
     {
         icaNode->startICA();
+    }
+    else if (button == &resetButton)
+    {
+        icaNode->resetCache(subProcComboBox.getSelectedId());
     }
     else if (button == &clearButton)
     {
@@ -206,6 +223,20 @@ void ICAEditor::valueChanged(Value& value)
         // "X" should be visible iff there is an ICA operation loaded for the current subproc
         clearButton.setVisible(!value.toString().isEmpty());
     }
+    else if (value.refersToSameSourceAs(pctFullVal))
+    {
+        collectedIndicator.setText("(" + value.toString() + "% full)", dontSendNotification);
+        bool full = value.getValue().equals(100);
+        {
+            collectedIndicator.setVisible(!full);
+            startButton.setVisible(full);
+        }
+    }
+    else if (value.refersToSameSourceAs(icaRunningVal))
+    {
+        bool running = value.getValue();
+        runningIndicator.setVisible(running);
+    }
 }
 
 
@@ -224,19 +255,6 @@ void ICAEditor::updateSettings()
 
     uint32 currSubProc = icaNode->getCurrSubProc();
     subProcComboBox.setSelectedId(currSubProc, dontSendNotification);
-
-    collectedIndicator.getTextValue().referTo(icaNode->getPctFullValue());
-}
-
-
-void ICAEditor::startAcquisition()
-{
-    startButton.setEnabled(true);
-}
-
-void ICAEditor::stopAcquisition()
-{
-    startButton.setEnabled(false);
 }
 
 
