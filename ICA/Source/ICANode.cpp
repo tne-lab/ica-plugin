@@ -398,7 +398,10 @@ void ICANode::loadCustomParametersFromXml()
             auto rejectStrings = StringArray::fromTokens(rejectedComps, false);
             for (const String& str : rejectStrings)
             {
-                rejectSet.add(str.getIntValue());
+                if (!str.isEmpty())
+                {
+                    rejectSet.add(str.getIntValue());
+                }
             }
 
             newOps.emplace(subProc, std::make_pair(std::move(configFile), std::move(rejectSet)));

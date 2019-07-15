@@ -77,7 +77,7 @@ void ICACanvas::buttonClicked(Button* button)
 
     if (selected)
     {
-        op->rejectedComponents.remove(kComp);
+        op->rejectedComponents.removeValue(kComp);
     }
     else
     {
