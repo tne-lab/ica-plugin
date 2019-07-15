@@ -28,6 +28,8 @@ using namespace ICA;
 // static members
 const float ICANode::icaTargetFs    (500.0f);
 
+const String ICANode::chanHintPrefix("!chans: ");
+
 const String ICANode::inputFilename("input.floatdata");
 const String ICANode::configFilename("binica.sc");
 const String ICANode::weightFilename("output.wts");
@@ -102,9 +104,9 @@ void ICANode::resetICA(uint32 subProc, bool block)
     }
 }
 
-void ICANode::loadICA(const File& configFile)
+Result ICANode::loadICA(const File& configFile)
 {
-    loadICA(configFile, currSubProc);
+    return loadICA(configFile, currSubProc);
 }
 
 void ICANode::resetCache(uint32 subProc)
@@ -364,15 +366,18 @@ void ICANode::saveCustomParametersToXml(XmlElement* parentElement)
         if (data.icaOp && !data.icaOp->isNoop())
         {
             XmlElement* opNode = parentElement->createNewChildElement("ICA_OP");
-            opNode->setAttribute("subproc", int(subProc));
-            opNode->setAttribute("configFile", data.icaConfigPath.toString());
 
-            String rejectedComps = "";
-            for (int comp : data.icaOp->rejectedComponents)
-            {
-                rejectedComps = rejectedComps + String(comp) + " ";
-            }
-            opNode->setAttribute("reject", rejectedComps);
+            opNode->setAttribute("configFile", data.icaConfigPath.toString());
+            opNode->setAttribute("subproc", int(subProc));
+            opNode->setAttribute("subprocChans", intSetToString(data.icaOp->enabledChannels));
+            opNode->setAttribute("reject", intSetToString(data.icaOp->rejectedComponents));
+
+            // add base64-encoded matrices
+            XmlElement* mixingNode = opNode->createNewChildElement("MIXING");
+            saveMatrixToXml(mixingNode, data.icaOp->mixing);
+
+            XmlElement* unmixingNode = opNode->createNewChildElement("UNMIXING");
+            saveMatrixToXml(unmixingNode, data.icaOp->unmixing);
         }
     }
 }
@@ -381,47 +386,71 @@ void ICANode::loadCustomParametersFromXml()
 {
     if (parametersAsXml != nullptr)
     {
-        // first collect operations to load...then we'll iterate over all the subprocs
-        std::map<uint32, std::pair<String, SortedSet<int>>> newOps;
-
-        forEachXmlChildElementWithTagName(*parametersAsXml, opNode, "ICA_OP")
-        {
-            uint32 subProc = opNode->getIntAttribute("subproc");
-            if (subProc == 0) { continue; }
-
-            String configFile = opNode->getStringAttribute("configFile");
-            if (configFile.isEmpty()) { continue; }
-
-            String rejectedComps = opNode->getStringAttribute("reject");
-            SortedSet<int> rejectSet;
-
-            auto rejectStrings = StringArray::fromTokens(rejectedComps, false);
-            for (const String& str : rejectStrings)
-            {
-                if (!str.isEmpty())
-                {
-                    rejectSet.add(str.getIntValue());
-                }
-            }
-
-            newOps.emplace(subProc, std::make_pair(std::move(configFile), std::move(rejectSet)));
-        }
-        
         // each subproc should either load in an ICA operation or be reset.
         for (const auto& subProcEntry : subProcData)
         {
             uint32 subProc = subProcEntry.first;
+            resetICA(subProc, true);
 
-            auto newOp = newOps.find(subProc);
-            if (newOp != newOps.end())
+            forEachXmlChildElementWithTagName(*parametersAsXml, opNode, "ICA_OP")
             {
-                File configFile = newOp->second.first;
-                SortedSet<int>* rejectSet = &newOp->second.second;
-                loadICA(configFile, subProc, rejectSet);
-            }
-            else
-            {
-                resetICA(subProc, true);
+
+                if (!opNode->getIntAttribute("subproc") == subProc)
+                {
+                    continue;
+                }
+
+                String configFile = opNode->getStringAttribute("configFile");
+                if (configFile.isEmpty())
+                {
+                    continue;
+                }
+
+                SortedSet<int> rejectSet = stringToIntSet(opNode->getStringAttribute("reject"));
+                Result res = loadICA(configFile, subProc, &rejectSet);
+
+                if (res.failed())
+                {
+                    // try loading matrices from XML file directly
+                    XmlElement* mixingNode = opNode->getChildByName("MIXING");
+                    XmlElement* unmixingNode = opNode->getChildByName("UNMIXING");
+
+                    if (!mixingNode || !unmixingNode)
+                    {
+                        // give up
+                        std::cerr << res.getErrorMessage() << std::endl;
+                        continue;
+                    }
+
+                    ICARunInfo loadedInfo;
+                    loadedInfo.subProc = subProc;
+                    loadedInfo.config = configFile;
+                    loadedInfo.op = new ICAOperation();
+                    loadedInfo.op->rejectedComponents.swapWith(rejectSet);
+                    loadedInfo.op->enabledChannels = stringToIntSet(opNode->getStringAttribute("subprocChans"));
+
+                    int size = loadedInfo.op->enabledChannels.size();
+
+                    loadedInfo.nChannels = size;
+                    loadedInfo.op->mixing.resize(size, size);
+                    loadedInfo.op->unmixing.resize(size, size);
+
+                    res = readMatrixFromXml(mixingNode, loadedInfo.op->mixing);
+                    if (res.wasOk())
+                    {
+                        res = readMatrixFromXml(unmixingNode, loadedInfo.op->unmixing);
+                    }
+
+                    if (res.wasOk())
+                    {
+                        res = setNewICAOp(loadedInfo);
+                    }
+
+                    if (res.failed())
+                    {
+                        std::cerr << "Failed to load ICA operation: " << res.getErrorMessage() << std::endl;
+                    }
+                }
             }
         }
     }
@@ -582,7 +611,9 @@ File ICANode::getICABaseDir()
         return CoreServices::RecordNode::getRecordingPath();
     }
 
-    return File::getSpecialLocation(File::hostApplicationPath).getParentDirectory();
+    return File::getSpecialLocation(File::hostApplicationPath)
+        .getParentDirectory()
+        .getChildFile("ica_runs");
 }
 
 // ICA thread
@@ -591,33 +622,33 @@ void ICANode::run()
 {
     icaRunning = true;
 
-    ICARunInfo info;       
+    ICARunInfo info;
 
-    for (auto subroutine :
-    { 
-            &ICANode::prepareICA,
-            &ICANode::writeCacheData,
-            &ICANode::performICA,
-            &ICANode::processResults
+    // a little precarious since all the subfunctions have to have the exact same signature
+    // (aside from their names)
+    // could make it more flexible by using std::function, but that's probably worth avoiding.
+    for (auto subfunc :
+    {
+        &ICANode::prepareICA,
+        &ICANode::writeCacheData,
+        &ICANode::performICA,
+        &ICANode::processResults,
+        &ICANode::setRejectedCompsBasedOnCurrent,
+        &ICANode::setNewICAOp
     })
     {
-        Result res = (this->*subroutine)(info);
+        Result res = (this->*subfunc)(info);
+
         if (threadShouldExit())
         {
-            icaRunning = false;
-            return;
+            break;
         }
-        else if (res.failed())
+
+        if (res.failed())
         {
             CoreServices::sendStatusMessage("ICA failed: " + res.getErrorMessage());
-            icaRunning = false;
-            return;
+            break;
         }
-    }
-
-    while (!threadShouldExit() && !tryToSetNewICAOp(info))
-    {
-        wait(100);
     }
 
     icaRunning = false;    
@@ -636,8 +667,16 @@ Result ICANode::prepareICA(ICARunInfo& info)
         return Result::fail("No subprocessor selected");
     }
 
+    auto subProcEntry = subProcData.find(info.subProc);
+    if (subProcEntry == subProcData.end())
+    {
+        return Result::fail(String("Subprocessor ") + info.subProc + " no longer exists");
+    }
+
+    const SubProcData& currSubProcData = subProcEntry->second;
+
     // enabled channels = which channels of current subprocessor are enabled
-    const SortedSet<int>& subProcChans = subProcData[info.subProc].channelInds;
+    const SortedSet<int>& subProcChans = currSubProcData.channelInds;
     int nSubProcChans = subProcChans.size();
 
     GenericEditor* ed = getEditor();
@@ -662,10 +701,20 @@ Result ICANode::prepareICA(ICARunInfo& info)
     // find directory to save everything
     File baseDir = getICABaseDir();
 
+    if (!baseDir.isDirectory())
+    {
+        Result res = baseDir.createDirectory();
+        if (res.failed())
+        {
+            return Result::fail("Failed to make ICA runs directory ("
+                + res.getErrorMessage().trimEnd() + ")");
+        }
+    }
+
     // create a subdirectory for files, which we want to make sure doesn't exist yet
     while (true)
     {
-        if (threadShouldExit()) { return Result::ok(); }
+        if (currentThreadShouldExit()) { return Result::ok(); }
 
         String time = Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M-%S");
         File outDir = baseDir.getChildFile("ICA_" + time + icaDirSuffix);
@@ -695,7 +744,7 @@ Result ICANode::writeCacheData(ICARunInfo& info)
 
     while (true)
     {
-        if (threadShouldExit()) { return Result::ok(); }
+        if (currentThreadShouldExit()) { return Result::ok(); }
 
         // shouldn't be contentious since the cache is supposedly full,
         // but avoid blocking with a try lock just in case
@@ -744,12 +793,7 @@ Result ICANode::performICA(ICARunInfo& info)
         configStream << "# binica config file - for details, see https://sccn.ucsd.edu/wiki/Binica \n";
 
         // hint for loading - write which channels are enabled
-        configStream << "!chans:";
-        for (int chan : info.op->enabledChannels)
-        {
-            configStream << " " << chan;
-        }
-        configStream << '\n';
+        configStream << chanHintPrefix << intSetToString(info.op->enabledChannels) << '\n';
 
         configStream << "DataFile " << inputFilename << '\n';
         configStream << "chans " << info.nChannels << '\n';
@@ -777,8 +821,8 @@ Result ICANode::performICA(ICARunInfo& info)
 
     while (proc.isRunning())
     {
-        if (threadShouldExit()) { return Result::ok(); }
-        wait(200);
+        if (currentThreadShouldExit()) { return Result::ok(); }
+        sleep(200);
     }
 
     if (proc.failedToRun())
@@ -803,9 +847,8 @@ Result ICANode::processResults(ICARunInfo& info)
         int size = info.nChannels;
         int sizeSq = size * size;
 
-        HeapBlock<float> weightBlock(sizeSq);
-
-        Result res = readMatrix(info.weight, weightBlock, sizeSq);
+        Matrix weights(size, size);
+        Result res = readMatrix(info.weight, weights);
         if (res.failed())
         {
             return res;
@@ -813,18 +856,14 @@ Result ICANode::processResults(ICARunInfo& info)
 
         if (currentThreadShouldExit()) { return Result::ok(); }
 
-        HeapBlock<float> sphereBlock(sizeSq);
-
-        res = readMatrix(info.sphere, sphereBlock, sizeSq);
+        Matrix sphere(size, size);
+        res = readMatrix(info.sphere, sphere);
         if (res.failed())
         {
             return res;
         }
 
         if (currentThreadShouldExit()) { return Result::ok(); }
-
-        MatrixMap weights(weightBlock.getData(), size, size);
-        MatrixMap sphere(sphereBlock.getData(), size, size);
 
         // now just need to convert this to mixing and unmixing
 
@@ -857,79 +896,113 @@ Result ICANode::processResults(ICARunInfo& info)
     return Result::ok();
 }
 
-
-void ICANode::loadICA(const File& configFile, uint32 subProc, SortedSet<int>* rejectSet)
-{
-    // populate a new ICARunInfo struct
-    ICARunInfo loadedInfo;
-    loadedInfo.op = new ICAOperation();
-    loadedInfo.config = configFile;
-    loadedInfo.subProc = subProc;
-
-    Result res = populateInfoFromConfig(loadedInfo);
-    if (res.failed())
-    {
-        CoreServices::sendStatusMessage("ICA load failed: " + res.getErrorMessage());
-        return;
-    }
-
-    while (!tryToSetNewICAOp(loadedInfo, rejectSet))
-    {
-        Thread::sleep(100);
-    }
-}
-
-
-bool ICANode::tryToSetNewICAOp(ICARunInfo& info, SortedSet<int>* rejectSet)
+Result ICANode::setRejectedCompsBasedOnCurrent(ICARunInfo& info)
 {
     auto subProcEntry = subProcData.find(info.subProc);
     if (subProcEntry == subProcData.end())
     {
-        return false;
+        return Result::fail(String("Subprocessor ") + info.subProc + " does not exist");
+    }
+
+    SubProcData& thisSubProcData = subProcEntry->second;
+
+    while (true)
+    {
+        if (currentThreadShouldExit()) { return Result::ok(); }
+
+        const ScopedReadTryLock icaLock(thisSubProcData.icaMutex);
+        if (!icaLock.isLocked())
+        {
+            continue;
+        }
+
+        const ICAOperation& op = *thisSubProcData.icaOp;
+        if (op.isNoop())
+        {
+            info.op->rejectedComponents.add(0);
+        }
+        else
+        {
+            info.op->rejectedComponents = op.rejectedComponents;
+        }
+
+        return Result::ok();
+    }
+}
+
+Result ICANode::setNewICAOp(ICARunInfo& info)
+{
+    auto subProcEntry = subProcData.find(info.subProc);
+    if (subProcEntry == subProcData.end())
+    {
+        return Result::fail(String("Subprocessor ") + info.subProc + " no longer exists");
     }
 
     SubProcData& currSubProcData = subProcEntry->second;
 
-    ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
-    if (!icaLock.isLocked())
+    if (info.op->enabledChannels.getLast() >= currSubProcData.channelInds.size())
     {
-        return false;
+        return Result::fail("Operation needs more channels than are present in subprocessor " + info.subProc);
     }
 
-    ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
-
-    // reject first component by default
-    info.op->rejectedComponents.add(0);
-
-    if (rejectSet)
+    while (true)
     {
-        // use passed-in components to reject, as long as it works with the actual number of components
-        if (rejectSet->getLast() < info.op->enabledChannels.size())
+        if (currentThreadShouldExit()) { return Result::ok(); }
+
+        const ScopedWriteTryLock icaLock(currSubProcData.icaMutex);
+        if (!icaLock.isLocked())
         {
-            info.op->rejectedComponents.swapWith(*rejectSet);
+            continue;
         }
-        else
+
+        ScopedPointer<ICAOperation>& oldOp = currSubProcData.icaOp;
+
+        // see whether current rejected components are invalid
+        if (info.op->rejectedComponents.getLast() >= info.op->enabledChannels.size())
         {
             std::cerr << "Warning: rejected component set in loaded ICA op names nonexistent components" << std::endl;
             std::cerr << "Defaulting to rejecting first component" << std::endl;
+
+            info.op->rejectedComponents.clearQuick();
+            info.op->rejectedComponents.add(0);
         }
+
+        oldOp.swapWith(info.op);
+        currSubProcData.icaConfigPath = info.config.getFullPathName();
+
+        return Result::ok();
     }
-    else
+}
+
+
+Result ICANode::loadICA(const File& configFile, uint32 subProc, const SortedSet<int>* rejectSet)
+{
+    // populate a new ICARunInfo struct
+    ICARunInfo loadedInfo;
+    loadedInfo.op = new ICAOperation();
+    loadedInfo.subProc = subProc;
+    loadedInfo.config = configFile;
+
+    Result res = populateInfoFromConfig(loadedInfo);
+
+    if (res.wasOk())
     {
-        // see if we can reuse an existing "components" array
-        // this is only allowed if this subprocessor has an existing ICA transformation
-        // and it is based on the same channels.
-        if (oldOp->enabledChannels == info.op->enabledChannels)
+        if (rejectSet)
         {
-            // take old op's components
-            info.op->rejectedComponents.swapWith(oldOp->rejectedComponents);
+            loadedInfo.op->rejectedComponents = *rejectSet;
+        }
+        else
+        {
+            res = setRejectedCompsBasedOnCurrent(loadedInfo);
         }
     }
 
-    oldOp.swapWith(info.op);
-    currSubProcData.icaConfigPath = info.config.getFullPathName();
+    if (res.wasOk())
+    {
+        res = setNewICAOp(loadedInfo);
+    }
 
-    return true;
+    return res;
 }
 
 
@@ -955,14 +1028,10 @@ Result ICANode::populateInfoFromConfig(ICARunInfo& info)
         }
 
         // handle enabled channels hint
-        if (line.startsWith("!chans:"))
+        if (line.startsWith(chanHintPrefix))
         {
-            StringArray chanStrs = StringArray::fromTokens(line, false);
-            chanStrs.remove(0);
-            for (const String& chan : chanStrs)
-            {
-                info.op->enabledChannels.add(chan.getIntValue());
-            }
+            SortedSet<int> enabledChans = stringToIntSet(line.fromFirstOccurrenceOf(chanHintPrefix, false, false));
+            info.op->enabledChannels.swapWith(enabledChans);
         }
         else
         {
@@ -1014,78 +1083,33 @@ Result ICANode::populateInfoFromConfig(ICARunInfo& info)
         return Result::fail("Inconsistent number of channels");
     }
 
-    if (subProcData[currSubProc].channelInds.size() <= info.op->enabledChannels.getLast())
-    {
-        return Result::fail("Not enough channels in current subproc for selected ICA operation");
-    }
-
     // see whether we can use existing mixing and unmixing files
     File mixingFile   = configDir.getChildFile(mixingFilename);
     File unmixingFile = configDir.getChildFile(unmixingFilename);
 
-    int numel = info.nChannels * info.nChannels;
-    HeapBlock<float> matStore(numel);
-    if (readMatrix(unmixingFile, matStore, numel).wasOk())
-    {
-        info.op->unmixing = MatrixMap(matStore, info.nChannels, info.nChannels);
+    if (!info.weight.existsAsFile()) { return Result::fail("Invalid or missing weight file"); }
+    if (!info.sphere.existsAsFile()) { return Result::fail("Invalid or missing sphere file"); }
 
-        if (readMatrix(mixingFile, matStore, numel).wasOk())
-        {
-            info.op->mixing = MatrixMap(matStore, info.nChannels, info.nChannels);
-        }
-    }
-    else
+    info.op->unmixing.resize(info.nChannels, info.nChannels);
+    info.op->mixing.resize(info.nChannels, info.nChannels);
+
+    Result res = readMatrix(unmixingFile, info.op->unmixing);
+    if (res.wasOk())
     {
-        if (!info.weight.existsAsFile()) { return Result::fail("Invalid or missing weight file"); }
-        if (!info.sphere.existsAsFile()) { return Result::fail("Invalid or missing sphere file"); }
+        res = readMatrix(mixingFile, info.op->mixing);
     }
 
-    if (info.op->mixing.size() == 0)
+    if (res.failed())
     {
-        Result res = processResults(info);
-        if (res.failed())
-        {
-            return res;
-        }
+        // try using weight and sphere files
+        res = processResults(info);
     }
 
-    jassert(info.op->mixing.size() == numel);
-    return Result::ok();
+    return res;
 }
 
-Result ICANode::readMatrix(const File& source, HeapBlock<float>& dest, int numel)
-{
-    String fn = source.getFileName();
 
-    if (!source.existsAsFile())
-    {
-        return Result::fail("ICA did not create " + fn);
-    }
-
-    FileInputStream stream(source);
-    if (stream.failedToOpen())
-    {
-        return Result::fail("Failed to open " + fn
-            + " (" + stream.getStatus().getErrorMessage().trimEnd() + ")");
-    }
-
-    if (stream.getTotalLength() != numel * sizeof(float))
-    {
-        return Result::fail(fn + " has incorrect length");
-    }
-
-    stream.read(dest, numel * sizeof(float));
-    Result status = stream.getStatus();
-    if (status.failed())
-    {
-        return Result::fail("Failed to read " + fn
-            + " (" + status.getErrorMessage().trimEnd() + ")");
-    }
-
-    return Result::ok();
-}
-
-Result ICANode::saveMatrix(const File& dest, const MatrixRef& mat)
+Result ICANode::saveMatrix(const File& dest, MatrixConstRef mat)
 {
     String fn = dest.getFileName();
 
@@ -1105,6 +1129,115 @@ Result ICANode::saveMatrix(const File& dest, const MatrixRef& mat)
     }
 
     return Result::ok();
+}
+
+
+Result ICANode::readMatrix(const File& source, MatrixRef dest)
+{
+    String fn = source.getFileName();
+
+    if (!source.existsAsFile())
+    {
+        return Result::fail("Matrix file " + fn + " not found");
+    }
+
+    FileInputStream stream(source);
+    if (stream.failedToOpen())
+    {
+        return Result::fail("Failed to open " + fn
+            + " (" + stream.getStatus().getErrorMessage().trimEnd() + ")");
+    }
+
+    int size = dest.rows();
+    jassert(dest.cols() == size); // should always be a square matrix
+
+    if (stream.getTotalLength() != size * size * sizeof(float))
+    {
+        return Result::fail(fn + " has incorrect length");
+    }
+
+    HeapBlock<float> destBlock(size * size);
+    stream.read(destBlock, size * size * sizeof(float));
+
+    Result status = stream.getStatus();
+    if (status.failed())
+    {
+        return Result::fail("Failed to read " + fn
+            + " (" + status.getErrorMessage().trimEnd() + ")");
+    }
+
+    dest = MatrixMap(destBlock, size, size);
+
+    return Result::ok();
+}
+
+
+void ICANode::saveMatrixToXml(XmlElement* xml, MatrixConstRef mat)
+{
+    int size = mat.rows();
+    jassert(mat.cols() == size);
+
+    xml->setAttribute("size", size);
+    
+    String base64Mat = Base64::toBase64(mat.data(), sizeof(float) * size * size);
+    xml->addTextElement(base64Mat);
+}
+
+Result ICANode::readMatrixFromXml(const XmlElement* xml, MatrixRef dest)
+{
+    int size = xml->getIntAttribute("size");
+    if (size != dest.rows() || size != dest.cols())
+    {
+        return Result::fail("Matrix in XML does not match expected size");
+    }
+
+    HeapBlock<float> destBlock(size * size);
+    MemoryOutputStream matStream(destBlock, sizeof(float) * size * size);
+
+    String base64Mat = xml->getAllSubText();
+    if (!Base64::convertFromBase64(matStream, base64Mat))
+    {
+        return Result::fail("Matrix in XML could not be converted from base64");
+    }
+
+    dest = MatrixMap(destBlock, size, size);
+
+    return Result::ok();
+}
+
+
+String ICANode::intSetToString(const SortedSet<int>& set)
+{
+    String setString = "";
+    bool first = true;
+    for (int i : set)
+    {
+        if (!first)
+        {
+            setString += " ";
+        }
+        else
+        {
+            first = false;
+        }
+        setString += String(i);
+    }
+    return setString;
+}
+
+SortedSet<int> ICANode::stringToIntSet(const String& string)
+{
+    SortedSet<int> stringSet;
+
+    StringArray intStrs = StringArray::fromTokens(string, false);
+    intStrs.removeEmptyStrings();
+
+    for (const String& intStr : intStrs)
+    {
+        stringSet.add(intStr.getIntValue());
+    }
+
+    return stringSet;
 }
 
 

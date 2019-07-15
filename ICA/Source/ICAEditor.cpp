@@ -207,7 +207,12 @@ void ICAEditor::buttonEvent(Button* button)
         if (fc.browseForFileToOpen())
         {
             File configFile = fc.getResult();
-            icaNode->loadICA(configFile);
+            Result loadRes = icaNode->loadICA(configFile);
+            
+            if (loadRes.failed())
+            {
+                CoreServices::sendStatusMessage("ICA load failed: " + loadRes.getErrorMessage());
+            }
         }
     }
 }

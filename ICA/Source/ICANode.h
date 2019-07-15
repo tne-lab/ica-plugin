@@ -27,7 +27,8 @@ namespace ICA
 {
     using Matrix = Eigen::MatrixXf;
     using MatrixMap = Eigen::Map<Eigen::MatrixXf>;
-    using MatrixRef = Eigen::Ref<const Eigen::MatrixXf>;
+    using MatrixRef = Eigen::Ref<Eigen::MatrixXf>;
+    using MatrixConstRef = const Eigen::Ref<const Eigen::MatrixXf>&;
 
     // to cache input data to be used to compute ICA
     // modifications must be done through a handle which is secured by a mutex.
@@ -149,7 +150,7 @@ namespace ICA
         // replace any current ICA transformation with a dummy one that does nothing
         void resetICA(uint32 subProc, bool block = false);
 
-        void loadICA(const File& configFile);
+        Result loadICA(const File& configFile);
 
         // clear the data cache for this subproc and start over at 0%
         void resetCache(uint32 subProc);
@@ -206,6 +207,7 @@ namespace ICA
         static File getICABaseDir();
 
     private:
+        /**** member types ****/
 
         struct SubProcData
         {
@@ -235,36 +237,60 @@ namespace ICA
             ScopedPointer<ICAOperation> op;
         };
 
+        /***** nonstatic member functions ****/
+
         // Populate the info struct
         Result prepareICA(ICARunInfo& info);
 
         // Write data for ICA to input.floatdata file
         Result writeCacheData(ICARunInfo& info);
-
+        
         // Call the binica executable on our sample data
         Result performICA(ICARunInfo& info);
 
         // Read in output from binica and compute fields of ICAOutput
         Result processResults(ICARunInfo& info);
 
+        Result setRejectedCompsBasedOnCurrent(ICARunInfo& info);
+
+        // Tries to set the ICA operation described in info (i.e. on the correct
+        // subprocessor, with the matrices, enabled channels, and rejected components
+        // in the pointed-to operation.
+        //
+        // Fails if the target subprocessor is no longer present.
+        //
+        // If the rejected components are not/no longer valid due to the number of
+        // channels being too small, does not fail but defaults to rejecting the
+        // first component.
+        Result setNewICAOp(ICARunInfo& info);
+
         // Load ICA for a specific subprocessor.
         // If rejectSet is non-null, it will be *swapped* into the resulting operation's
         // rejected components, if possible.
-        void loadICA(const File& configFile, uint32 subProc, SortedSet<int>* rejectSet = nullptr);
-
-        // Returns false if unable to acquire the lock
-        // does not have to be run in the thread
-        bool tryToSetNewICAOp(ICARunInfo& info, SortedSet<int>* rejectSet = nullptr);
-
-        // For use when loading data. Uses config file to fill in
+        Result loadICA(const File& configFile, uint32 subProc, const SortedSet<int>* rejectSet = nullptr);
+        
+        // For use when loading data. Uses .sc config file to fill in
         // other information (including the transformation itself)
         Result populateInfoFromConfig(ICARunInfo& info);
 
-        // Helper to read ICA output
-        static Result readMatrix(const File& source, HeapBlock<float>& dest, int numel);
+        /**** static member functions ****/
 
         // Helper to save processed ICA transformation
-        static Result saveMatrix(const File &dest, const MatrixRef& mat);
+        static Result saveMatrix(const File &dest, MatrixConstRef mat);
+
+        // Helper to read ICA output
+        static Result readMatrix(const File& source, MatrixRef dest);
+
+        // for encoding matrices in XML
+        static void saveMatrixToXml(XmlElement* xml, MatrixConstRef mat);
+        static Result readMatrixFromXml(const XmlElement* xml, MatrixRef dest);
+
+        // for encoding sets of channels etc. in XML
+        static String intSetToString(const SortedSet<int>& set);
+        static SortedSet<int> stringToIntSet(const String& string);
+
+
+        /**** nonstatic data members ****/
 
         int icaSamples; // updated from editor
 
@@ -284,10 +310,13 @@ namespace ICA
         AudioSampleBuffer componentBuffer;
         
 
-        // constants
+        /**** static constants ****/
 
         // frequency at which samples are taken for ICA
         static const float icaTargetFs;
+
+        // start of line containing enabled channels hint in binica.sc files
+        static const String chanHintPrefix;
 
         static const String inputFilename;
         static const String configFilename;
