@@ -2,7 +2,9 @@
 
 This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you to decompose incoming data using ICA, and then exclude specified components. This can be used to reduce common noise, for instance - for more information, see [Whitmore & Lin, "Unmasking local activity within local field potentials (LFPs) by removing distal electrical signals using independent component analysis"](https://linkinghub.elsevier.com/retrieve/pii/S1053811916001415).
 
-<img src="ica_editor.png" width="220" />
+**Use this branch if you are using the new CMake build system to build the main GUI and built-in plugins. If not, use the *master* branch.**
+
+<img src="ica_editor.png" width="350" /> <img src="ica_canvas.png" width="467"/>
 
 ## Requirements
 
