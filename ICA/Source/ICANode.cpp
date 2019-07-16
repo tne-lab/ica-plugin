@@ -395,7 +395,7 @@ void ICANode::loadCustomParametersFromXml()
             forEachXmlChildElementWithTagName(*parametersAsXml, opNode, "ICA_OP")
             {
 
-                if (!opNode->getIntAttribute("subproc") == subProc)
+                if (opNode->getIntAttribute("subproc") != subProc)
                 {
                     continue;
                 }
@@ -516,7 +516,6 @@ void ICANode::setCurrSubProc(uint32 fullId)
         auto newSubProcData = subProcData.find(fullId);
         if (newSubProcData == subProcData.end())
         {
-            jassertfalse;
             return;
         }
         currSubProc = fullId;
@@ -1148,7 +1147,7 @@ Result ICANode::readMatrix(const File& source, MatrixRef dest)
             + " (" + stream.getStatus().getErrorMessage().trimEnd() + ")");
     }
 
-    int size = dest.rows();
+    int size = int(dest.rows());
     jassert(dest.cols() == size); // should always be a square matrix
 
     if (stream.getTotalLength() != size * size * sizeof(float))
@@ -1174,7 +1173,7 @@ Result ICANode::readMatrix(const File& source, MatrixRef dest)
 
 void ICANode::saveMatrixToXml(XmlElement* xml, MatrixConstRef mat)
 {
-    int size = mat.rows();
+    int size = int(mat.rows());
     jassert(mat.cols() == size);
 
     xml->setAttribute("size", size);

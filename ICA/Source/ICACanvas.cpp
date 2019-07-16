@@ -56,7 +56,7 @@ void ICACanvas::valueChanged(Value& value)
         // this is how we get notified of a change to the ICA operation.
         // update everything.
         update();
-    }    
+    }
 }
 
 void ICACanvas::buttonClicked(Button* button)
@@ -506,17 +506,17 @@ void ICACanvas::ContentCanvas::UnmixingInfo::update(UpdateInfo info)
             label->setFont({ 12, Font::plain });
             label->setJustificationType(Justification::left);
 
-            int x = matrixView.getX() + (c + 1) * unitLength; // pivot point is right side of column
-            int y = matrixView.getBottom();
-            label->setTopLeftPosition(x, y);
-            // rotate 90 degrees 
-            label->setTransform(AffineTransform::rotation(float_Pi / 2, x, y));
-
             addAndMakeVisible(label);
         }
 
         label->setText(info.chanNames[info.op.enabledChannels[c]], dontSendNotification);
         label->setSize(getNaturalWidth(*label) + 10, unitLength);
+
+        int x = matrixView.getX() + (c + 1) * unitLength; // pivot point is right side of column
+        int y = matrixView.getBottom();
+        label->setTopLeftPosition(x, y);
+        // rotate 90 degrees 
+        label->setTransform(AffineTransform::rotation(float_Pi / 2, x, y));
 
         labelHeight = jmax(labelHeight, label->getBoundsInParent().getHeight());
     }
