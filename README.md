@@ -8,13 +8,22 @@ This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you t
 
 ## Requirements
 
-Depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) header library, which is included at the top level as a submodule. After cloning, you must also initialize the submodule:
+### Eigen
+
+This plugin depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) library for matrix manipulation (version 3.3.x). If you are on Linux or macOS, Eigen should be available through your usual package repository (e.g., the Ubuntu package is called `libeigen3-dev`).
+
+Windows users have 2 options:
+
+* If you already have a compatible version of Eigen somewhere on your computer, you just need to set the environment variable `Eigen3_DIR` to the path to your Eigen root directory. (You can also set this when calling CMake with the option `-DEigen_Dir="C:/path/to/eigen"`.) This will allow CMake to find and link to Eigen. If you set an environment variable, be sure to completely restart the shell process from which you are calling `cmake`.
+
+* Otherwise, you can clone Eigen as a submodule of this repository. This is already set up, but the submodule does not get downloaded by default when you clone `ica-plugin`. To do so, use the following commands:
 
 ```
-cd eigen
 git submodule init
 git submodule update
 ```
+
+### BINICA
 
 The plugin depends on a program called [BINICA](https://sccn.ucsd.edu/wiki/Binica). Since the compilation process seems complex and the precompiled versions are well-tested, just the compiled binaries for each platform are currently included under `/binica`. The following platforms are supported:
 

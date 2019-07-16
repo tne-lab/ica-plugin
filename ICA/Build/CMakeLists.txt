@@ -50,9 +50,6 @@ target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BASE_DIR}/JuceLibraryCode
 
 set(BINICA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../binica)
 
-# eigen (header library):
-target_include_directories(${PLUGIN_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../eigen)
-
 #Libraries and compiler options
 if(MSVC)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/VisualStudio2013)
@@ -72,6 +69,8 @@ if(MSVC)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
 	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
+
+	set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../libs)
 
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)
@@ -107,3 +106,7 @@ foreach( src_file IN ITEMS ${SRC_FILES})
 	string(REPLACE "/" "\\" group_name "${src_path_rel}")
 	source_group("${group_name}" FILES "${src_file}")
 endforeach()
+
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+
+target_link_libraries(${PLUGIN_NAME} Eigen3::Eigen)
