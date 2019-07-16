@@ -4,7 +4,7 @@ This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you t
 
 **Use this branch if you are building the main GUI and plugins without using CMake. If you have updated your plugin-GUI repository to use CMake for all building (on the development branch as of writing), use the *cmake-gui* branch instead.**
 
-<img src="ica_editor.png" width="220" /> <img src="ica_canvas.png" width="600"/>
+<img src="ica_editor.png" width="350" /> <img src="ica_canvas.png" width="467"/>
 
 ## Requirements
 
