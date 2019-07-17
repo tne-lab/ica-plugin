@@ -32,8 +32,7 @@ const String ICAEditor::durationTooltip("At least 2 minutes of training is"
     " it will continue to stay updated with new samples while discarding old samples.");
 
 const String ICAEditor::dirSuffixTooltip("Output of the ICA run will be saved"
-    " to a directory 'ICA_<timestamp>_<suffix>' within either the Open Ephys"
-    " executable folder or, if a recording is active, the recording folder.");
+    " to 'ica/ICA_<timestamp>_<suffix>' within the current recordings directory.");
 
 const String ICAEditor::resetTooltip("Reset cache; a new run will only use data"
     " from after the reset.");
@@ -202,6 +201,13 @@ void ICAEditor::buttonEvent(Button* button)
     else if (button == &loadButton)
     {
         File icaBaseDir = ICANode::getICABaseDir();
+        if (!icaBaseDir.isDirectory())
+        {
+            // default to bin/ica
+            icaBaseDir = File::getSpecialLocation(File::hostApplicationPath)
+                .getParentDirectory().getChildFile("ica");
+        }
+
         FileChooser fc("Choose a binica config file...", icaBaseDir, "*.sc", true);
 
         if (fc.browseForFileToOpen())

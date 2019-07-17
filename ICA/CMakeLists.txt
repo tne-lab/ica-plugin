@@ -3,11 +3,11 @@ if (NOT DEFINED GUI_BASE_DIR)
 	if (DEFINED ENV{GUI_BASE_DIR})
 		set(GUI_BASE_DIR $ENV{GUI_BASE_DIR})
 	else()
-		set(GUI_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../plugin-GUI)
+		set(GUI_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../plugin-GUI)
 	endif()
 endif()
 
-get_filename_component(PROJECT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)
+get_filename_component(PROJECT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR} ABSOLUTE)
 get_filename_component(PLUGIN_NAME ${PROJECT_FOLDER} NAME)
 
 project(OE_PLUGIN_${PLUGIN_NAME})
@@ -16,7 +16,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 	set(LINUX 1)
 endif()
 
-set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../Source)
+set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 file(GLOB SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h")
 
 if (MSVC)
@@ -48,7 +48,7 @@ target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_init
 
 target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BASE_DIR}/JuceLibraryCode ${GUI_BASE_DIR}/JuceLibraryCode/modules ${GUI_BASE_DIR}/Source/Plugins/Headers)
 
-set(BINICA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../binica)
+set(BINICA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../binica)
 
 #Libraries and compiler options
 if(MSVC)
@@ -68,7 +68,7 @@ if(MSVC)
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl-)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
+	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR}/ica RENAME binica.exe)
 
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)
@@ -81,7 +81,7 @@ elseif(LINUX)
 	target_compile_options(${PLUGIN_NAME} PRIVATE -O3) #enable optimization for linux debug
 	
 	install(TARGETS ${PLUGIN_NAME} LIBRARY DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/ica_linux DESTINATION ${GUI_BIN_DIR} RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_linux DESTINATION ${GUI_BIN_DIR}/ica RENAME binica)
 
 elseif(APPLE)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/MacOSX/build/)
@@ -91,7 +91,7 @@ elseif(APPLE)
 	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared")
 
 	install(TARGETS ${PLUGIN_NAME} DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/PlugIns)
-	install(PROGRAMS ${BINICA_DIR}/ica_osx DESTINATION ${GUI_BIN_DIR} RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_osx DESTINATION ${GUI_BIN_DIR}/ica RENAME binica)
 	
 	set(CMAKE_PREFIX_PATH /opt/local)
 endif()
