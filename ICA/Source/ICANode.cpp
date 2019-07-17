@@ -669,7 +669,7 @@ Result ICANode::prepareICA(ICARunInfo& info)
     auto subProcEntry = subProcData.find(info.subProc);
     if (subProcEntry == subProcData.end())
     {
-        return Result::fail(String("Subprocessor ") + info.subProc + " no longer exists");
+        return Result::fail("Subprocessor " + String(info.subProc) + " no longer exists");
     }
 
     const SubProcData& currSubProcData = subProcEntry->second;
@@ -900,7 +900,7 @@ Result ICANode::setRejectedCompsBasedOnCurrent(ICARunInfo& info)
     auto subProcEntry = subProcData.find(info.subProc);
     if (subProcEntry == subProcData.end())
     {
-        return Result::fail(String("Subprocessor ") + info.subProc + " does not exist");
+        return Result::fail("Subprocessor " + String(info.subProc) + " does not exist");
     }
 
     SubProcData& thisSubProcData = subProcEntry->second;
@@ -934,7 +934,7 @@ Result ICANode::setNewICAOp(ICARunInfo& info)
     auto subProcEntry = subProcData.find(info.subProc);
     if (subProcEntry == subProcData.end())
     {
-        return Result::fail(String("Subprocessor ") + info.subProc + " no longer exists");
+        return Result::fail("Subprocessor " + String(info.subProc) + " no longer exists");
     }
 
     SubProcData& currSubProcData = subProcEntry->second;

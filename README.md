@@ -8,13 +8,21 @@ This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you t
 
 ## Requirements
 
-Depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) header library, which is included at the top level as a submodule. After cloning, you must also initialize the submodule:
+### Eigen
 
-```
-cd eigen
-git submodule init
-git submodule update
-```
+This plugin depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) library for matrix manipulation (version 3.3.x). If you are on Linux or macOS, Eigen should be available through your usual package repository (e.g., the Ubuntu package is called `libeigen3-dev`).
+
+On Windows, follow the following steps:
+
+* From the Eigen website [here](http://eigen.tuxfamily.org/index.php?title=Main_Page), download the latest *stable* release as a ZIP file, and unzip it to somewhere convenient. (You can also clone it from the git mirror, but make sure to checkout a stable version, e.g. 3.3.7, because they use "master" as a development branch.)
+
+* In the Eigen root directory, make a new folder called `build`
+
+* From the `build` folder, run `cmake ..` to install Eigen. You don't have to actually build the generated solution, which will copy some files to your Program Files folder; running CMake registers the location of the header files in CMake's User Package Registry (i.e. the Windows Registry), which is all we need.
+
+  * You might notice some warnings about not being able to find BLAS or LAPACK. They're not required, and since the matrices this plugin deals with are typically small they probably won't make much of a difference, but if you're interested, it is possible to install them and use them with Eigen by following the instructions [here](http://eigen.tuxfamily.org/dox/TopicUsingBlasLapack.html).
+
+### BINICA
 
 The plugin depends on a program called [BINICA](https://sccn.ucsd.edu/wiki/Binica). Since the compilation process seems complex and the precompiled versions are well-tested, just the compiled binaries for each platform are currently included under `/binica`. The following platforms are supported:
 

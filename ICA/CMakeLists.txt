@@ -73,9 +73,6 @@ endif()
 
 set(BINICA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../binica)
 
-# eigen (header library):
-target_include_directories(${PLUGIN_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../eigen)
-
 #Libraries and compiler options
 if(MSVC)
 	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)	
@@ -115,3 +112,7 @@ foreach( src_file IN ITEMS ${SRC_FILES})
 	string(REPLACE "/" "\\" group_name "${src_path_rel}")
 	source_group("${group_name}" FILES "${src_file}")
 endforeach()
+
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+
+target_link_libraries(${PLUGIN_NAME} Eigen3::Eigen)
