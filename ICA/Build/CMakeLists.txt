@@ -70,8 +70,6 @@ if(MSVC)
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
 	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
 
-	set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../libs)
-
 elseif(LINUX)
 	set(GUI_BIN_DIR ${GUI_BASE_DIR}/Builds/Linux/build)
 

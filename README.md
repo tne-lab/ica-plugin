@@ -12,16 +12,15 @@ This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you t
 
 This plugin depends on the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) library for matrix manipulation (version 3.3.x). If you are on Linux or macOS, Eigen should be available through your usual package repository (e.g., the Ubuntu package is called `libeigen3-dev`).
 
-Windows users have 2 options:
+On Windows, follow the following steps:
 
-* If you already have a compatible version of Eigen somewhere on your computer, you just need to set the environment variable `Eigen3_DIR` to the path to your Eigen root directory. (You can also set this when calling CMake with the option `-DEigen_Dir="C:/path/to/eigen"`.) This will allow CMake to find and link to Eigen. If you set an environment variable, be sure to completely restart the shell process from which you are calling `cmake`.
+* From the Eigen website [here](http://eigen.tuxfamily.org/index.php?title=Main_Page), download the latest *stable* release as a ZIP file, and unzip it to somewhere convenient. (You can also clone it from the git mirror, but make sure to checkout a stable version, e.g. 3.3.7, because they use "master" as a development branch.)
 
-* Otherwise, you can clone Eigen as a submodule of this repository. This is already set up, but the submodule does not get downloaded by default when you clone `ica-plugin`. To do so, use the following commands:
+* In the Eigen root directory, make a new folder called `build`
 
-```
-git submodule init
-git submodule update
-```
+* From the `build` folder, run `cmake ..` to install Eigen. You don't have to actually build the generated solution, which will copy some files to your Program Files folder; running CMake registers the location of the header files in CMake's User Package Registry (i.e. the Windows Registry), which is all we need.
+
+  * You might notice some warnings about not being able to find BLAS or LAPACK. They're not required, and since the matrices this plugin deals with are typically small they probably won't make much of a difference, but if you're interested, it is possible to install them and use them with Eigen by following the instructions [here](http://eigen.tuxfamily.org/dox/TopicUsingBlasLapack.html).
 
 ### BINICA
 
