@@ -78,7 +78,7 @@ public:
 
         static const String binicaExe =
             File::getSpecialLocation(File::hostApplicationPath)
-            .getParentDirectory().getChildFile("binica.exe").getFullPathName();
+            .getParentDirectory().getChildFile("ica/binica.exe").getFullPathName();
 
         // change working dir so that binica can use relative filenames
         const String workingDir = configFilename.getParentDirectory().getFullPathName();

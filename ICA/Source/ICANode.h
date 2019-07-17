@@ -204,6 +204,7 @@ namespace ICA
         // similar to above
         ICAOperation* writeICAOperation(ScopedPointer<ScopedWriteLock>& lock) const;
 
+        // get root directory of ICA results
         static File getICABaseDir();
 
     private:

@@ -62,7 +62,7 @@ public:
 
             static const String binicaExe =
                 File::getSpecialLocation(File::hostApplicationPath)
-                .getParentDirectory().getChildFile("binica").getFullPathName();
+                .getParentDirectory().getChildFile("ica/binica").getFullPathName();
 
             execl(binicaExe.toRawUTF8(), binicaExe.toRawUTF8(), static_cast<char*>(nullptr));
             exit(-1);

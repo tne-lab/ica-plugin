@@ -605,14 +605,14 @@ ICAOperation* ICANode::writeICAOperation(ScopedPointer<ScopedWriteLock>& lock) c
 
 File ICANode::getICABaseDir()
 {
-    if (CoreServices::getRecordingStatus())
+    if (!CoreServices::getRecordingStatus())
     {
-        return CoreServices::RecordNode::getRecordingPath();
+        // see what the next recording dir will be
+        // (in case it has changed or no recording has been done yet)
+        CoreServices::RecordNode::createNewrecordingDir();
     }
 
-    return File::getSpecialLocation(File::hostApplicationPath)
-        .getParentDirectory()
-        .getChildFile("ica_runs");
+    return CoreServices::RecordNode::getRecordingPath().getParentDirectory().getChildFile("ica");
 }
 
 // ICA thread

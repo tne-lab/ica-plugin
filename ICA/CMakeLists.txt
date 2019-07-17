@@ -79,7 +79,7 @@ if(MSVC)
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl-)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR} RENAME binica.exe)
+	install(PROGRAMS ${BINICA_DIR}/ica_windows.exe DESTINATION ${GUI_BIN_DIR}/ica RENAME binica.exe)
 
 	list(APPEND CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 
@@ -91,7 +91,7 @@ elseif(LINUX)
 	target_compile_options(${PLUGIN_NAME} PRIVATE -O3) #enable optimization for linux debug
 	
 	install(TARGETS ${PLUGIN_NAME} LIBRARY DESTINATION ${GUI_BIN_DIR}/plugins)
-	install(PROGRAMS ${BINICA_DIR}/ica_linux DESTINATION ${GUI_BIN_DIR} RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_linux DESTINATION ${GUI_BIN_DIR}/ica RENAME binica)
 
 elseif(APPLE)
 	set_target_properties(${PLUGIN_NAME} PROPERTIES BUNDLE TRUE)
@@ -99,7 +99,7 @@ elseif(APPLE)
 	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared")
 
 	install(TARGETS ${PLUGIN_NAME} DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/PlugIns)
-	install(PROGRAMS ${BINICA_DIR}/ica_osx DESTINATION ${GUI_BIN_DIR} RENAME binica)
+	install(PROGRAMS ${BINICA_DIR}/ica_osx DESTINATION ${GUI_BIN_DIR}/ica RENAME binica)
 	
 	list(APPEND CMAKE_PREFIX_PATH /opt/local)
 endif()
