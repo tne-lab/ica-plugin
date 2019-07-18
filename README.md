@@ -1,6 +1,6 @@
 # ICA Plugin
 
-This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you to decompose incoming data using ICA, and then exclude specified components. This can be used to reduce common noise, for instance - for more information, see [Whitmore & Lin, "Unmasking local activity within local field potentials (LFPs) by removing distal electrical signals using independent component analysis"](https://linkinghub.elsevier.com/retrieve/pii/S1053811916001415).
+This plugin for the [Open Ephys GUI](http://www.open-ephys.org/gui) allows you to decompose incoming data using ICA, and then extract or exclude specific independent components. One way to utilize this is as a substitute or supplement to referencing to reject common noise - for more information, see [Whitmore & Lin, "Unmasking local activity within local field potentials (LFPs) by removing distal electrical signals using independent component analysis"](https://linkinghub.elsevier.com/retrieve/pii/S1053811916001415).
 
 **Use this branch if you are using the new CMake build system to build the main GUI and built-in plugins. If not, use the *master* branch.**
 
@@ -41,3 +41,33 @@ The plugin depends on a program called [BINICA](https://sccn.ucsd.edu/wiki/Binic
 ## Installation
 
 First, you must download and build the Open Ephys GUI source - the library it exports is required to build plugins for it. Then, clone this repository in a neighboring folder to the `plugin-GUI` repository and follow these instructions: [Create the build files through CMake](https://open-ephys.atlassian.net/wiki/spaces/OEW/pages/1259110401/Plugin+CMake+Builds).
+
+## Usage
+
+<img src="ica_editor_annotated.png" width="500" />
+
+When an ICA processor is in the signal chain, it continuously caches the most recent data in an internal buffer. You can choose how much data to collect by changing the training length. It's a good idea to test offline how long of a training data segment produces a good ICA decomposition for your data - for example, in MATLAB you can use FieldTrip's `ft_componentanalysis` function with the 'runica' or 'binica' method, or you can also run this from EEGLAB. The training data is downsampled to a sample rate of approximately 500 Hz.
+
+If you want to start collecting data at a specific point rather than use what is already cached, you can click the "RESET" button to clear the cache.
+
+Once the cache is full, the "START" button will appear. This launches the binica program and begins training. You should be able to see its output on your terminal (a window should pop up if you're running on Windows without a terminal attached). Training time depends mainly on the length of training data; it ends when "wchange" goes below 10^-6.
+
+Once training is done, the name of the directory containing this run's output files appears at the bottom of the editor. This is stored within an "ica" directory in the current recording location. You can load this in later sessions by clicking the load button in the title and finding the "binica.sc" file. As long as there are enough input channels in the selected subprocessor, the same decomposition matrices will be applied to the same channels of the selected input. The mixing and unmixing matrices are also base64-encoded in the XML data when you save a signal chain, so they can be reloaded even if the ICA output has been moved or is otherwise unavailable.
+
+When a decomposition is loaded, heatmaps of the weights in the mixing and unmixing matrices will appear in the canvas window or tab. (See screenshot above.) The output on the included channels is equal to the input left-matrix-multiplied by <code>M&nbsp;\*&nbsp;S&nbsp;\*&nbsp;U</code>, where M is the mixing matrix, U is the unmixing matrix, and S is a binary selection matrix which is 1 on the diagonal entries that are selected to be kept and 0 everywhere else. (The actual implementation avoids doing multiplications with terms equal to 0.)
+
+To reject certain components, deselect the corresponding buttons in the center "KEEP COMPONENTS" area. Some pointers:
+
+* By default, the first component (which has the highest variance) is rejected.
+
+* With all components selected, the output is the same as the input.
+
+* With none selected, the output is 0 on the channels that are included in the decomposition.
+
+* Selecting just one component has the effect of outputting that component on each included channel, scaled by the component's weight on each channel in the mixing matrix. Thus, this can be used to visualize what you would be rejecting by excluding that component.
+
+* In general, the "INVERT" button is helpful to switch between the signal with noise components rejected and the noise components themselves.
+
+## Caution
+
+While ICA can often separate noise and artifacts from signal better than other methods, it can also easily reduce signal and increase noise. It's important to exclude very noisy or broken channels before running, and if any included channels start looking very different after ICA has been trained (especially if they become more noisy), the decomposition will no longer be a good fit to the distribution of data and will probably spread any new noise to all the channels. In this case, noisy channels should be excluded and ICA re-run. (Of course, you would do the same thing if you were using an ordinary common average ref. The difference is that retraining ICA might take a while, so it's important to try to exclude the right channels the first time.)
