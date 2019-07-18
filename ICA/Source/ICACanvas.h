@@ -124,6 +124,7 @@ namespace ICA
                 ColourBar matrixColourBar;
                 Label title;
                 OwnedArray<Label> chanLabels;
+                OwnedArray<Label> compLabels;
                 MatrixView matrixView;
 
                 ColourBar normColourBar;
@@ -169,6 +170,7 @@ namespace ICA
                 Label title;
                 MatrixView matrixView;
                 OwnedArray<Label> chanLabels;
+                OwnedArray<Label> compLabels;
                 ColourBar colourBar;
 
             } unmixingInfo;
