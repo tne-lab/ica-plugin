@@ -99,6 +99,10 @@ namespace ICA
         Label durationUnit;
         static const String durationTooltip;
 
+        // contains collectedIndicator, startButton, and runningIndicator;
+        // which one is visible depends on the current state.
+        Component progressStartArea;
+
         Label collectedIndicator;
 
         // visible in place of collectedIndicator when the buffer is full
@@ -114,6 +118,9 @@ namespace ICA
         // to reset the buffer
         UtilityButton resetButton;
         static const String resetTooltip;
+
+        // contains currICAIndicator and clearButton.
+        Component currICAArea;
 
         Label currICAIndicator;
         UtilityButton clearButton;
