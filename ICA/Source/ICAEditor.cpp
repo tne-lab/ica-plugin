@@ -86,19 +86,22 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     durationUnit.setTooltip(durationTooltip);
     addAndMakeVisible(durationUnit);
 
-    collectedIndicator.setBounds(130, 55, 80, 20);
+    collectedIndicator.setBounds(0, 0, 80, 20);
     collectedIndicator.setTooltip(durationTooltip);
-    addAndMakeVisible(collectedIndicator);
 
-    startButton.setBounds(130, 55, 60, 20);
+    startButton.setBounds(0, 0, 60, 20);
     startButton.addListener(this);
-    addChildComponent(startButton);
 
-    runningIndicator.setBounds(130, 55, 70, 20);
+    runningIndicator.setBounds(0, 0, 70, 20);
     runningIndicator.setAlwaysOnTop(true);
     runningIndicator.setColour(Label::backgroundColourId, getBackgroundGradient().getColourAtPosition(0.5));
     runningIndicator.setOpaque(true);
-    addChildComponent(runningIndicator);
+
+    progressStartArea.setBounds(130, 55, 80, 20);
+    progressStartArea.addAndMakeVisible(collectedIndicator);
+    progressStartArea.addChildComponent(startButton);
+    progressStartArea.addChildComponent(runningIndicator);
+    addAndMakeVisible(progressStartArea);
 
     dirSuffixLabel.setBounds(10, 80, 50, 20);
     dirSuffixLabel.setTooltip(dirSuffixTooltip);
@@ -117,13 +120,16 @@ ICAEditor::ICAEditor(ICANode* parentNode)
     resetButton.setTooltip(resetTooltip);
     addAndMakeVisible(resetButton);
     
-    currICAIndicator.setBounds(10, 105, 175, 20);
-    addAndMakeVisible(currICAIndicator);
+    currICAIndicator.setBounds(0, 0, 175, 20);
 
-    clearButton.setBounds(185, 105, 20, 20);
+    clearButton.setBounds(175, 0, 20, 20);
     clearButton.addListener(this);
     clearButton.setVisible(!currICAIndicator.getText().isEmpty());
-    addChildComponent(clearButton);
+
+    currICAArea.setBounds(10, 105, 210, 20);
+    currICAArea.addAndMakeVisible(currICAIndicator);
+    currICAArea.addChildComponent(clearButton);
+    addAndMakeVisible(currICAArea);
 
     loadButton.addListener(this);
     loadButton.setBounds(desiredWidth - 70, 5, 15, 15);
