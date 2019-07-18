@@ -253,7 +253,7 @@ Font ICACanvas::ContentCanvas::getLargeFont()
 
 Font ICACanvas::ContentCanvas::getSmallFont()
 {
-    return{ "Default", 12, Font::plain };
+    return{ 12, Font::plain };
 }
 
 ICACanvas::ContentCanvas::MixingInfo::MixingInfo()
@@ -283,10 +283,10 @@ void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
     matrixColourBar.resetRange();
     normColourBar.resetRange();
 
-    int nChans = info.op.mixing.rows();
     int nComps = info.op.mixing.cols();
+    jassert(nComps == info.op.mixing.rows());
 
-    matrixView.setSize(nComps * unitLength, nChans * unitLength);
+    matrixView.setSize(nComps * unitLength, nComps * unitLength);
     matrixView.setData(info.op.mixing);
 
     normView.setSize(nComps * unitLength, unitLength);
@@ -294,47 +294,27 @@ void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
 
     // layout
     StringArray usedChannelNames;
-    Font chanLabelFont(12, Font::plain);
-    int labelWidth = 0;
+    Font chanLabelFont = getSmallFont();
+    int chanLabelWidth = 0;
 
-    for (int c = 0; c < nChans; ++c)
+    for (int c = 0; c < nComps; ++c)
     {
         const String& chanName = info.chanNames[info.op.enabledChannels[c]];
         usedChannelNames.add(chanName);
-        labelWidth = jmax(labelWidth, chanLabelFont.getStringWidth(chanName));
+        chanLabelWidth = jmax(chanLabelWidth, chanLabelFont.getStringWidth(chanName));
     }
 
     // add some extra buffer
-    labelWidth += 10;
+    chanLabelWidth += 10;
 
-    if (chanLabels.size() > nChans)
-    {
-        chanLabels.removeLast(chanLabels.size() - nChans);
-    }
-
-    for (int c = 0; c < nChans; ++c)
-    {
-        Label* label = chanLabels[c];
-        if (!label)
-        {
-            label = chanLabels.set(c, new Label());
-            label->setColour(Label::textColourId, Colours::white);
-            label->setFont(chanLabelFont);
-            label->setJustificationType(Justification::right);
-            label->setTopLeftPosition(matrixColourBar.getRight() + unitLength, title.getHeight() + c * unitLength);
-            addAndMakeVisible(label);
-        }
-
-        label->setText(usedChannelNames[c], dontSendNotification);
-        label->setSize(labelWidth, unitLength);
-    }
+    int labelX = matrixColourBar.getRight() + unitLength;
 
     title.setSize(jmax(matrixView.getWidth(), getNaturalWidth(title)), title.getHeight());
-    title.setTopLeftPosition(chanLabels[0]->getRight(), 0);
+    title.setTopLeftPosition(labelX + chanLabelWidth, 0);
 
     matrixView.setTopLeftPosition(title.getX(), title.getBottom());
 
-    normView.setTopLeftPosition(title.getX(), jmax(matrixView.getBottom(), matrixColourBar.getBottom()) + 4 + colourBarY);
+    normView.setTopLeftPosition(title.getX(), jmax(matrixView.getBottom(), matrixColourBar.getBottom()) + unitLength + 4);
 
     normColourBar.setTopLeftPosition(0, normView.getY() - colourBarY);
 
@@ -342,6 +322,47 @@ void ICACanvas::ContentCanvas::MixingInfo::update(UpdateInfo info)
     normLabel.setTopLeftPosition(title.getX(), normView.getBottom());
 
     setSize(jmax(title.getRight(), matrixView.getRight()), jmax(normColourBar.getBottom(), normLabel.getBottom()));
+
+    // labels
+    if (chanLabels.size() > nComps)
+    {
+        chanLabels.removeLast(chanLabels.size() - nComps);
+    }
+
+    if (compLabels.size() > nComps)
+    {
+        compLabels.removeLast(compLabels.size() - nComps);
+    }
+
+    for (int comp = 0; comp < nComps; ++comp)
+    {
+        Label* chanLabel = chanLabels[comp];
+        if (!chanLabel)
+        {
+            chanLabel = chanLabels.set(comp, new Label());
+            chanLabel->setColour(Label::textColourId, Colours::white);
+            chanLabel->setFont(chanLabelFont);
+            chanLabel->setJustificationType(Justification::right);
+            chanLabel->setTopLeftPosition(labelX, title.getHeight() + comp * unitLength);
+            addAndMakeVisible(chanLabel);
+        }
+
+        chanLabel->setText(usedChannelNames[comp], dontSendNotification);
+        chanLabel->setSize(chanLabelWidth, unitLength);
+
+        Label* compLabel = compLabels[comp];
+        if (!compLabel)
+        {
+            compLabel = compLabels.set(comp, new Label());
+            compLabel->setColour(Label::textColourId, Colours::white);
+            compLabel->setFont(chanLabelFont);
+            compLabel->setText(String(comp + 1), dontSendNotification);
+            compLabel->setSize(unitLength * 3 / 2, unitLength);
+            addAndMakeVisible(compLabel);
+        }
+
+        compLabel->setTopLeftPosition(matrixView.getX() + comp * unitLength, matrixView.getBottom());
+    }
 }
 
 ICACanvas::ContentCanvas::ComponentSelectionArea::ComponentSelectionArea(ICACanvas& visualizer)
@@ -384,16 +405,16 @@ void ICACanvas::ContentCanvas::ComponentSelectionArea::update(UpdateInfo info)
         componentButtons.removeLast(componentButtons.size() - nComps);
     }
 
-    for (int c = 0; c < nComps; ++c)
+    for (int comp = 0; comp < nComps; ++comp)
     {
-        ElectrodeButton* btn = componentButtons[c];
+        ElectrodeButton* btn = componentButtons[comp];
         if (!btn)
         {
-            btn = componentButtons.set(c, new ElectrodeButton(c + 1));
+            btn = componentButtons.set(comp, new ElectrodeButton(comp + 1));
             btn->addListener(&visualizer);
             btn->setAlwaysOnTop(true);
             btn->setSize(unitLength, unitLength);
-            btn->setTopLeftPosition(background.getPosition().translated(unitLength * c, unitLength * c));
+            btn->setTopLeftPosition(background.getPosition().translated(unitLength * comp, unitLength * comp));
 
             addAndMakeVisible(btn);
         }
@@ -480,46 +501,68 @@ void ICACanvas::ContentCanvas::UnmixingInfo::update(UpdateInfo info)
     colourBar.resetRange();
 
     int nComps = info.op.unmixing.rows();
-    int nChans = info.op.unmixing.cols();
+    jassert(nComps == info.unmixing.cols());
 
-    matrixView.setSize(nChans * unitLength, nComps * unitLength);
+    matrixView.setSize(nComps * unitLength, nComps * unitLength);
     matrixView.setData(info.op.unmixing);
 
-    // layout
     title.setSize(jmax(matrixView.getWidth(), getNaturalWidth(title)), title.getHeight());
 
-    colourBar.setTopLeftPosition(title.getBounds().getBottomRight().translated(unitLength * 3 / 2, -colourBarY));
-    
-    if (chanLabels.size() > nChans)
+    // labels
+    if (chanLabels.size() > nComps)
     {
-        chanLabels.removeLast(chanLabels.size() - nChans);
+        chanLabels.removeLast(chanLabels.size() - nComps);
+    }
+
+    if (compLabels.size() > nComps)
+    {
+        compLabels.removeLast(compLabels.size() - nComps);
     }
 
     int labelHeight = 0;
-    for (int c = 0; c < nChans; ++c)
-    {
-        Label* label = chanLabels[c];
-        if (!label)
-        {
-            label = chanLabels.set(c, new Label());
-            label->setColour(Label::textColourId, Colours::white);
-            label->setFont({ 12, Font::plain });
-            label->setJustificationType(Justification::left);
+    Font chanLabelFont = getSmallFont();
 
-            addAndMakeVisible(label);
+    for (int comp = 0; comp < nComps; ++comp)
+    {
+        Label* chanLabel = chanLabels[comp];
+        if (!chanLabel)
+        {
+            chanLabel = chanLabels.set(comp, new Label());
+            chanLabel->setColour(Label::textColourId, Colours::white);
+            chanLabel->setFont(chanLabelFont);
+            chanLabel->setJustificationType(Justification::left);
+            addAndMakeVisible(chanLabel);
         }
 
-        label->setText(info.chanNames[info.op.enabledChannels[c]], dontSendNotification);
-        label->setSize(getNaturalWidth(*label) + 10, unitLength);
+        chanLabel->setText(info.chanNames[info.op.enabledChannels[comp]], dontSendNotification);
+        chanLabel->setSize(getNaturalWidth(*chanLabel) + 10, unitLength);
 
-        int x = matrixView.getX() + (c + 1) * unitLength; // pivot point is right side of column
+        int x = matrixView.getX() + (comp + 1) * unitLength; // pivot point is right side of column
         int y = matrixView.getBottom();
-        label->setTopLeftPosition(x, y);
+        chanLabel->setTopLeftPosition(x, y);
         // rotate 90 degrees 
-        label->setTransform(AffineTransform::rotation(float_Pi / 2, x, y));
+        chanLabel->setTransform(AffineTransform::rotation(float_Pi / 2, x, y));
 
-        labelHeight = jmax(labelHeight, label->getBoundsInParent().getHeight());
+        labelHeight = jmax(labelHeight, chanLabel->getBoundsInParent().getHeight());
+
+        Label* compLabel = compLabels[comp];
+        if (!compLabel)
+        {
+            compLabel = compLabels.set(comp, new Label());
+            compLabel->setColour(Label::textColourId, Colours::white);
+            compLabel->setFont(chanLabelFont);
+            compLabel->setJustificationType(Justification::left);
+            compLabel->setText(String(comp + 1), dontSendNotification);
+            compLabel->setSize(unitLength * 3 / 2, unitLength);
+            addAndMakeVisible(compLabel);
+        }
+
+        compLabel->setTopLeftPosition(matrixView.getRight(), matrixView.getY() + comp * unitLength);
     }
+
+    int rightEdge = jmax(title.getRight(), matrixView.getRight() + unitLength + 4);
+
+    colourBar.setTopLeftPosition(rightEdge + unitLength * 3 / 2, title.getBottom() - colourBarY);
 
     setSize(colourBar.getRight(), jmax(colourBar.getBottom(), matrixView.getBottom() + labelHeight));
 }
