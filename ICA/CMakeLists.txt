@@ -29,11 +29,6 @@ else()
 endif()
 set(SRC_FILES ${SRC_FILES} ${NATIVE_FILES})
 
-set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
-
-set(CONFIGURATION_FOLDER $<$<CONFIG:Debug>:Debug>$<$<NOT:$<CONFIG:Debug>>:Release>)
-
-list(APPEND CMAKE_PREFIX_PATH ${GUI_COMMONLIB_DIR} ${GUI_COMMONLIB_DIR}/${CONFIGURATION_FOLDER})
 
 if (APPLE)
 	add_library(${PLUGIN_NAME} MODULE ${SRC_FILES})
@@ -50,7 +45,7 @@ target_compile_definitions(${PLUGIN_NAME} PUBLIC
 	$<$<PLATFORM_ID:Linux>:JUCE_DISABLE_NATIVE_FILECHOOSERS=1>
 	$<$<CONFIG:Debug>:DEBUG=1>
 	$<$<CONFIG:Debug>:_DEBUG=1>
-	$<$<CONFIG:Release>:NDEBUG=1>
+	$<$<NOT:$<CONFIG:Debug>>:NDEBUG=1>
 	)
 
 target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_initializers)
@@ -58,10 +53,20 @@ target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_init
 target_include_directories(${PLUGIN_NAME} PUBLIC
 	${GUI_BASE_DIR}/JuceLibraryCode 
 	${GUI_BASE_DIR}/JuceLibraryCode/modules
-	${GUI_BASE_DIR}/Plugins/Headers
-	${GUI_COMMONLIB_DIR}/include)
+	${GUI_BASE_DIR}/Plugins/Headers)
 
-set(GUI_BIN_DIR ${GUI_BASE_DIR}/Build/${CONFIGURATION_FOLDER})
+set(GUI_BIN_DIR ${GUI_BASE_DIR}/Build/$<CONFIG>)
+foreach(config ${CMAKE_CONFIGURATION_TYPES})
+	if (NOT EXISTS ${GUI_BASE_DIR}/Build/${config})
+		if (EXISTS ${GUI_BASE_DIR}/Build/Release)
+			# default to release
+			message(WARNING "${config} ${PLUGIN_NAME} build will link to Release GUI build")
+			set(GUI_BIN_DIR $<IF:$<CONFIG:${config}>,${GUI_BASE_DIR}/Build/Release,${GUI_BIN_DIR}>)
+		else()
+			message(WARNING "${config} ${PLUGIN_NAME} build will not be available")
+		endif()
+	endif()
+endforeach()
 
 if (NOT CMAKE_LIBRARY_ARCHITECTURE)
 	if (CMAKE_SIZEOF_VOID_P EQUAL 8)
