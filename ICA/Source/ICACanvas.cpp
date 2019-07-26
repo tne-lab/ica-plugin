@@ -501,7 +501,7 @@ void ICACanvas::ContentCanvas::UnmixingInfo::update(UpdateInfo info)
     colourBar.resetRange();
 
     int nComps = info.op.unmixing.rows();
-    jassert(nComps == info.unmixing.cols());
+    jassert(nComps == info.op.unmixing.cols());
 
     matrixView.setSize(nComps * unitLength, nComps * unitLength);
     matrixView.setData(info.op.unmixing);
